@@ -51,7 +51,8 @@ class TelegramBot:
             [InlineKeyboardButton("📈 Стратегии", callback_data="strategies"),
              InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
             [InlineKeyboardButton("📜 История", callback_data="history"),
-             InlineKeyboardButton("🔬 Бэктест", callback_data="backtest")],
+             InlineKeyboardButton("🔬 Бэктест", callback_data="backtest_menu")],
+            [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
         ]
 
         await update.message.reply_text(
@@ -194,7 +195,13 @@ class TelegramBot:
             )
 
     async def cmd_backtest(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Команда /backtest [strategy] — запуск бэктеста."""
+        """
+        Команда /backtest [strategy] [from] [to] — запуск бэктеста.
+        Примеры:
+          /backtest
+          /backtest grid
+          /backtest ema_crossover 2025-01-01 2025-06-01
+        """
         if not await self._check_auth(update):
             return
 
@@ -202,23 +209,30 @@ class TelegramBot:
 
         try:
             from backtesting.backtest import Backtester
-            import ccxt.async_support as ccxt
+            from backtesting.visualizer import plot_equity_curve
+            from main import fetch_ohlcv_range, parse_date
 
-            strategy_name = context.args[0] if context.args else self.engine.strategy.name
+            args = context.args or []
+            strategy_name = args[0] if args else self.engine.strategy.name
+            date_from = args[1] if len(args) > 1 else None
+            date_to = args[2] if len(args) > 2 else None
+
             if strategy_name not in STRATEGY_MAP:
                 await update.message.reply_text(f"Стратегия '{strategy_name}' не найдена")
                 return
 
             strategy = STRATEGY_MAP[strategy_name]()
+            symbol = self.settings.default_symbol
 
-            # Получаем исторические данные
-            exchange = ccxt.binance({"enableRateLimit": True})
-            try:
-                ohlcv = await exchange.fetch_ohlcv(
-                    self.settings.default_symbol, strategy.timeframe, limit=500
-                )
-            finally:
-                await exchange.close()
+            # Загружаем данные с поддержкой дат
+            since = parse_date(date_from) if date_from else None
+            until = parse_date(date_to) if date_to else None
+            ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe, since, until)
+
+            if len(ohlcv) < strategy.min_candles:
+                await update.message.reply_text(
+                    f"Недостаточно данных: {len(ohlcv)} свечей (нужно {strategy.min_candles})")
+                return
 
             # Запускаем бэктест
             risk_params = self.settings.get_risk_params()
@@ -231,14 +245,96 @@ class TelegramBot:
                 take_profit_pct=risk_params["take_profit_pct"],
             )
 
-            result = bt.run(ohlcv, self.settings.default_symbol)
+            result = bt.run(ohlcv, symbol)
             await update.message.reply_text(
                 f"```\n{result.summary()}\n```", parse_mode="Markdown"
             )
 
+            # Отправляем график
+            chart_bytes = plot_equity_curve(result)
+            if chart_bytes:
+                import io
+                await update.message.reply_photo(
+                    photo=io.BytesIO(chart_bytes),
+                    caption=f"📊 {strategy.name} | {symbol}",
+                )
+
         except Exception as e:
-            logger.error(f"Ошибка бэктеста: {e}")
+            logger.error(f"Ошибка бэктеста: {e}", exc_info=True)
             await update.message.reply_text(f"Ошибка бэктеста: {e}")
+
+    async def cmd_compare(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """
+        Команда /compare [strategies] — сравнение стратегий.
+        Примеры:
+          /compare                              — все стратегии
+          /compare ema_crossover,grid,supertrend — конкретные
+        """
+        if not await self._check_auth(update):
+            return
+
+        await update.message.reply_text(
+            "🔬 Сравниваю стратегии... Это может занять 1-2 минуты.")
+
+        try:
+            from backtesting.backtest import Backtester
+            from backtesting.visualizer import (
+                plot_comparison, format_comparison_table_telegram,
+            )
+            from main import fetch_ohlcv_range
+
+            args = context.args or []
+            if args:
+                strategy_names = [s.strip() for s in args[0].split(",")]
+            else:
+                strategy_names = list(STRATEGY_MAP.keys())
+
+            symbol = self.settings.default_symbol
+            risk_params = self.settings.get_risk_params()
+            results = []
+
+            for name in strategy_names:
+                if name not in STRATEGY_MAP:
+                    continue
+
+                strategy = STRATEGY_MAP[name]()
+                ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe)
+
+                if len(ohlcv) < strategy.min_candles:
+                    continue
+
+                bt = Backtester(
+                    strategy=strategy,
+                    initial_balance=self.settings.paper_balance,
+                    risk_per_trade_pct=risk_params["risk_per_trade_pct"],
+                    leverage=risk_params["max_leverage"],
+                    stop_loss_pct=risk_params["stop_loss_pct"],
+                    take_profit_pct=risk_params["take_profit_pct"],
+                )
+
+                result = bt.run(ohlcv, symbol)
+                results.append(result)
+
+            if not results:
+                await update.message.reply_text("Нет результатов для сравнения")
+                return
+
+            # Отправляем текст
+            text = format_comparison_table_telegram(results)
+            await update.message.reply_text(text, parse_mode="Markdown")
+
+            # Отправляем график
+            chart_bytes = plot_comparison(results)
+            if chart_bytes:
+                import io
+                await update.message.reply_photo(
+                    photo=io.BytesIO(chart_bytes),
+                    caption=f"📊 Сравнение {len(results)} стратегий | {symbol}",
+                )
+
+        except Exception as e:
+            logger.error(f"Ошибка сравнения: {e}", exc_info=True)
+            await update.message.reply_text(f"Ошибка сравнения: {e}")
 
     async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Команда /stats [strategy] — статистика по стратегии."""
@@ -319,8 +415,14 @@ class TelegramBot:
             "/symbol — Торговые пары\n"
             "/mode — Режим торговли\n"
             "/backtest — Бэктест стратегии\n"
+            "/compare — Сравнение стратегий\n"
             "/stats — Статистика стратегии\n"
             "/help — Справка\n\n"
+            "*Бэктест с датами:*\n"
+            "`/backtest grid 2025-01-01 2025-06-01`\n\n"
+            "*Сравнение стратегий:*\n"
+            "`/compare` — все стратегии\n"
+            "`/compare ema_crossover,grid,supertrend`\n\n"
             "*Стратегии:*\n"
             "• `ema_crossover` — Трендовая (EMA пересечение)\n"
             "• `rsi_mean_reversion` — Контртренд (RSI + BB)\n"
@@ -449,6 +551,109 @@ class TelegramBot:
                 text += f"{emoji} {t['symbol']} {t['side'].upper()} | PnL: `{t['pnl']:+.2f}`\n"
             await query.edit_message_text(text, parse_mode="Markdown")
 
+        elif data == "backtest_menu":
+            keyboard = []
+            for name, cls in STRATEGY_MAP.items():
+                s = cls()
+                keyboard.append([InlineKeyboardButton(
+                    f"🔬 {s.name}",
+                    callback_data=f"run_backtest_{name}",
+                )])
+            keyboard.append([InlineKeyboardButton(
+                "📊 Сравнить ВСЕ", callback_data="compare_all")])
+            keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_main")])
+            await query.edit_message_text(
+                "🔬 *Бэктест — выберите стратегию:*\n\n"
+                "Или используйте команду:\n"
+                "`/backtest grid 2025-01-01 2025-06-01`",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("run_backtest_"):
+            name = data.replace("run_backtest_", "")
+            await query.edit_message_text("🔬 Запускаю бэктест... Подождите.")
+            try:
+                from backtesting.backtest import Backtester
+                from backtesting.visualizer import plot_equity_curve
+                from main import fetch_ohlcv_range
+
+                strategy = STRATEGY_MAP[name]()
+                symbol = self.settings.default_symbol
+                ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe)
+
+                risk_params = self.settings.get_risk_params()
+                bt = Backtester(
+                    strategy=strategy,
+                    initial_balance=self.settings.paper_balance,
+                    risk_per_trade_pct=risk_params["risk_per_trade_pct"],
+                    leverage=risk_params["max_leverage"],
+                    stop_loss_pct=risk_params["stop_loss_pct"],
+                    take_profit_pct=risk_params["take_profit_pct"],
+                )
+                result = bt.run(ohlcv, symbol)
+                await query.edit_message_text(
+                    f"```\n{result.summary()}\n```", parse_mode="Markdown")
+
+                chart_bytes = plot_equity_curve(result)
+                if chart_bytes:
+                    import io as _io
+                    await query.message.reply_photo(
+                        photo=_io.BytesIO(chart_bytes),
+                        caption=f"📊 {strategy.name} | {symbol}",
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка бэктеста: {e}", exc_info=True)
+                await query.edit_message_text(f"Ошибка бэктеста: {e}")
+
+        elif data == "compare_all":
+            await query.edit_message_text(
+                "🔬 Сравниваю все стратегии... Подождите 1-2 минуты.")
+            try:
+                from backtesting.backtest import Backtester
+                from backtesting.visualizer import (
+                    plot_comparison, format_comparison_table_telegram,
+                )
+                from main import fetch_ohlcv_range
+
+                symbol = self.settings.default_symbol
+                risk_params = self.settings.get_risk_params()
+                results = []
+
+                for name, cls in STRATEGY_MAP.items():
+                    strategy = cls()
+                    ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe)
+                    if len(ohlcv) < strategy.min_candles:
+                        continue
+                    bt = Backtester(
+                        strategy=strategy,
+                        initial_balance=self.settings.paper_balance,
+                        risk_per_trade_pct=risk_params["risk_per_trade_pct"],
+                        leverage=risk_params["max_leverage"],
+                        stop_loss_pct=risk_params["stop_loss_pct"],
+                        take_profit_pct=risk_params["take_profit_pct"],
+                    )
+                    result = bt.run(ohlcv, symbol)
+                    results.append(result)
+
+                if not results:
+                    await query.edit_message_text("Нет результатов")
+                    return
+
+                text = format_comparison_table_telegram(results)
+                await query.edit_message_text(text, parse_mode="Markdown")
+
+                chart_bytes = plot_comparison(results)
+                if chart_bytes:
+                    import io as _io
+                    await query.message.reply_photo(
+                        photo=_io.BytesIO(chart_bytes),
+                        caption=f"📊 Сравнение {len(results)} стратегий | {symbol}",
+                    )
+            except Exception as e:
+                logger.error(f"Ошибка сравнения: {e}", exc_info=True)
+                await query.edit_message_text(f"Ошибка сравнения: {e}")
+
         elif data == "back_main":
             keyboard = [
                 [InlineKeyboardButton("📊 Статус", callback_data="status"),
@@ -457,6 +662,9 @@ class TelegramBot:
                  InlineKeyboardButton("⏹ Остановить", callback_data="bot_stop")],
                 [InlineKeyboardButton("📈 Стратегии", callback_data="strategies"),
                  InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
+                [InlineKeyboardButton("📜 История", callback_data="history"),
+                 InlineKeyboardButton("🔬 Бэктест", callback_data="backtest_menu")],
+                [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
             ]
             await query.edit_message_text(
                 "🤖 *Crypto Trading Bot*\nВыберите действие:",
@@ -544,6 +752,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("risk", self.cmd_risk))
         self._app.add_handler(CommandHandler("symbol", self.cmd_symbol))
         self._app.add_handler(CommandHandler("backtest", self.cmd_backtest))
+        self._app.add_handler(CommandHandler("compare", self.cmd_compare))
         self._app.add_handler(CommandHandler("stats", self.cmd_stats))
         self._app.add_handler(CommandHandler("mode", self.cmd_mode))
         self._app.add_handler(CommandHandler("help", self.cmd_help))

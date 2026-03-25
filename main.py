@@ -4,7 +4,10 @@ Crypto Trading Bot — Точка входа.
 Запуск:
     python main.py                  # Полный режим (бот + Telegram)
     python main.py --no-telegram    # Только бот, без Telegram
-    python main.py --backtest       # Только бэктест
+    python main.py --backtest       # Бэктест одной стратегии
+    python main.py --compare        # Сравнение всех стратегий
+    python main.py --compare --strategies ema_crossover,grid,supertrend
+    python main.py --backtest --from 2025-01-01 --to 2025-06-01
 """
 
 import asyncio
@@ -12,6 +15,7 @@ import logging
 import argparse
 import os
 import sys
+from datetime import datetime
 
 from config import settings, StrategyName
 from bot.engine import TradingEngine
@@ -32,24 +36,100 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
+# === Утилиты для загрузки исторических данных ===
+
+TIMEFRAME_MS = {
+    "1m": 60_000, "5m": 300_000, "15m": 900_000,
+    "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000,
+    "1d": 86_400_000,
+}
+
+
+async def fetch_ohlcv_range(
+    symbol: str, timeframe: str,
+    since: int = None, until: int = None, limit: int = 1000,
+) -> list:
+    """
+    Загружает OHLCV данные за указанный период.
+    Если период длинный — делает несколько запросов (пагинация).
+    """
+    import ccxt.async_support as ccxt
+    exchange = ccxt.binance({"enableRateLimit": True})
+
+    try:
+        if since is None and until is None:
+            # Простой запрос — последние N свечей
+            return await exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+
+        all_candles = []
+        tf_ms = TIMEFRAME_MS.get(timeframe, 3_600_000)
+        batch_size = 1000  # Макс свечей за один запрос (лимит Binance)
+        cursor = since
+
+        while True:
+            candles = await exchange.fetch_ohlcv(
+                symbol, timeframe, since=cursor, limit=batch_size,
+            )
+            if not candles:
+                break
+
+            # Фильтруем по until
+            if until:
+                candles = [c for c in candles if c[0] <= until]
+
+            all_candles.extend(candles)
+
+            if len(candles) < batch_size:
+                break  # Дошли до конца
+
+            if until and candles[-1][0] >= until:
+                break
+
+            # Сдвигаем курсор
+            cursor = candles[-1][0] + tf_ms
+            await asyncio.sleep(0.5)  # Пауза для rate limit
+
+        # Убираем дубликаты по timestamp
+        seen = set()
+        unique = []
+        for c in all_candles:
+            if c[0] not in seen:
+                seen.add(c[0])
+                unique.append(c)
+
+        logger.info(f"Загружено {len(unique)} свечей {symbol} {timeframe}")
+        return sorted(unique, key=lambda c: c[0])
+
+    finally:
+        await exchange.close()
+
+
+def parse_date(date_str: str) -> int:
+    """Парсит дату в миллисекунды (timestamp)."""
+    for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M", "%d.%m.%Y"):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            continue
+    raise ValueError(f"Неверный формат даты: '{date_str}'. Используйте YYYY-MM-DD")
+
+
+# === Торговые циклы ===
+
 async def run_trading_loop(engine: TradingEngine, telegram: TelegramBot = None,
                            interval: int = 60) -> None:
-    """
-    Основной торговый цикл.
-    Каждые `interval` секунд запускает анализ и торговлю.
-    """
+    """Основной торговый цикл."""
     logger.info(f"Торговый цикл запущен (интервал: {interval}с)")
 
     while engine._running:
         try:
-            # Проверяем SL/TP
             sl_tp_actions = await engine.check_stop_losses()
             for action in sl_tp_actions:
                 logger.info(f"SL/TP: {action}")
                 if telegram:
                     await telegram.notify_trade(action)
 
-            # Основной цикл анализа
             actions = await engine.run_cycle()
             for action in actions:
                 logger.info(f"Действие: {action}")
@@ -67,19 +147,15 @@ async def run_with_telegram(engine: TradingEngine) -> None:
     telegram = TelegramBot(settings, engine)
     app = telegram.build()
 
-    # Стартуем движок
     await engine.start()
 
-    # Определяем интервал на основе таймфрейма стратегии
     tf = engine.strategy.timeframe if engine.strategy else "1h"
     interval_map = {"1m": 30, "5m": 60, "15m": 120, "30m": 300, "1h": 600, "4h": 1800}
     interval = interval_map.get(tf, 300)
 
-    # Запускаем Telegram и торговый цикл параллельно
     async with app:
         await app.start()
         await app.updater.start_polling()
-
         logger.info("Telegram бот запущен")
 
         try:
@@ -108,8 +184,12 @@ async def run_without_telegram(engine: TradingEngine) -> None:
         await engine.stop()
 
 
-async def run_backtest(strategy_name: str, symbol: str, balance: float) -> None:
-    """Запуск бэктеста."""
+# === Бэктест ===
+
+async def run_backtest(strategy_name: str, symbol: str, balance: float,
+                       date_from: str = None, date_to: str = None,
+                       save_chart: bool = True) -> None:
+    """Запуск бэктеста одной стратегии."""
     if strategy_name not in STRATEGY_MAP:
         logger.error(f"Стратегия '{strategy_name}' не найдена. Доступные: {list(STRATEGY_MAP.keys())}")
         return
@@ -117,15 +197,14 @@ async def run_backtest(strategy_name: str, symbol: str, balance: float) -> None:
     strategy = STRATEGY_MAP[strategy_name]()
     logger.info(f"Бэктест: {strategy.name} на {symbol}")
 
-    # Получаем исторические данные
-    import ccxt.async_support as ccxt
-    exchange = ccxt.binance({"enableRateLimit": True})
+    # Загружаем данные
+    since = parse_date(date_from) if date_from else None
+    until = parse_date(date_to) if date_to else None
+    ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe, since, until)
 
-    try:
-        ohlcv = await exchange.fetch_ohlcv(symbol, strategy.timeframe, limit=1000)
-        logger.info(f"Получено {len(ohlcv)} свечей")
-    finally:
-        await exchange.close()
+    if len(ohlcv) < strategy.min_candles:
+        logger.error(f"Недостаточно данных: {len(ohlcv)} свечей (нужно минимум {strategy.min_candles})")
+        return
 
     # Запускаем бэктест
     risk_params = settings.get_risk_params()
@@ -141,25 +220,149 @@ async def run_backtest(strategy_name: str, symbol: str, balance: float) -> None:
     result = bt.run(ohlcv, symbol)
     print("\n" + result.summary() + "\n")
 
+    # Сохраняем график
+    if save_chart:
+        from backtesting.visualizer import plot_equity_curve
+        chart_path = f"data/backtest_{strategy_name}_{symbol.replace('/', '_')}.png"
+        plot_equity_curve(result, save_path=chart_path)
+        print(f"График сохранён: {chart_path}")
+
+
+# === Сравнение стратегий ===
+
+async def run_compare(strategy_names: list[str], symbol: str, balance: float,
+                      date_from: str = None, date_to: str = None) -> None:
+    """Сравнение нескольких стратегий на одних данных."""
+    from backtesting.visualizer import (
+        plot_comparison, format_comparison_table,
+    )
+
+    # Валидируем стратегии
+    valid_strategies = []
+    for name in strategy_names:
+        if name in STRATEGY_MAP:
+            valid_strategies.append(name)
+        else:
+            logger.warning(f"Стратегия '{name}' не найдена, пропускаю")
+
+    if not valid_strategies:
+        logger.error("Нет валидных стратегий для сравнения")
+        return
+
+    print(f"\nСравнение {len(valid_strategies)} стратегий на {symbol}...\n")
+
+    # Загружаем данные один раз (используем самый мелкий таймфрейм)
+    # Но каждая стратегия может иметь свой таймфрейм, поэтому загружаем отдельно
+    since = parse_date(date_from) if date_from else None
+    until = parse_date(date_to) if date_to else None
+
+    risk_params = settings.get_risk_params()
+    results = []
+
+    for name in valid_strategies:
+        strategy = STRATEGY_MAP[name]()
+        print(f"  Тестирую {strategy.name}...", end=" ", flush=True)
+
+        ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe, since, until)
+
+        if len(ohlcv) < strategy.min_candles:
+            print(f"ПРОПУСК (мало данных: {len(ohlcv)})")
+            continue
+
+        bt = Backtester(
+            strategy=strategy,
+            initial_balance=balance,
+            risk_per_trade_pct=risk_params["risk_per_trade_pct"],
+            leverage=risk_params["max_leverage"],
+            stop_loss_pct=risk_params["stop_loss_pct"],
+            take_profit_pct=risk_params["take_profit_pct"],
+        )
+
+        result = bt.run(ohlcv, symbol)
+        results.append(result)
+        print(f"OK | PnL: {result.total_pnl_pct:+.1f}% | Win Rate: {result.win_rate:.0f}%")
+
+    if not results:
+        print("\nНет результатов для сравнения.")
+        return
+
+    # Выводим таблицу
+    print("\n" + format_comparison_table(results) + "\n")
+
+    # Сохраняем график
+    chart_path = f"data/compare_{symbol.replace('/', '_')}.png"
+    plot_comparison(results, save_path=chart_path)
+    print(f"Сравнительный график сохранён: {chart_path}")
+
+    # Сохраняем индивидуальные графики
+    from backtesting.visualizer import plot_equity_curve
+    for r in results:
+        path = f"data/backtest_{r.strategy}_{symbol.replace('/', '_')}.png"
+        plot_equity_curve(r, save_path=path)
+
+    print(f"Индивидуальные графики сохранены в data/\n")
+
+
+# === Точка входа ===
 
 def main():
-    parser = argparse.ArgumentParser(description="Crypto Trading Bot")
+    parser = argparse.ArgumentParser(
+        description="Crypto Trading Bot",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Примеры:
+  python main.py                                    # Бот + Telegram
+  python main.py --no-telegram                      # Только бот
+  python main.py --backtest                         # Бэктест (по умолчанию)
+  python main.py --backtest --strategy grid --symbol ETH/USDT
+  python main.py --backtest --from 2025-01-01 --to 2025-06-01
+  python main.py --compare                          # Сравнить ВСЕ стратегии
+  python main.py --compare --strategies ema_crossover,grid,supertrend
+  python main.py --compare --symbol SOL/USDT --from 2025-03-01
+        """,
+    )
     parser.add_argument("--no-telegram", action="store_true", help="Запуск без Telegram")
     parser.add_argument("--backtest", action="store_true", help="Режим бэктеста")
+    parser.add_argument("--compare", action="store_true", help="Сравнение стратегий")
     parser.add_argument("--strategy", type=str, default=None, help="Стратегия для бэктеста")
+    parser.add_argument("--strategies", type=str, default=None,
+                        help="Стратегии для сравнения (через запятую)")
     parser.add_argument("--symbol", type=str, default=None, help="Торговая пара")
-    parser.add_argument("--balance", type=float, default=None, help="Стартовый баланс для бэктеста")
+    parser.add_argument("--balance", type=float, default=None, help="Стартовый баланс")
+    parser.add_argument("--from", dest="date_from", type=str, default=None,
+                        help="Дата начала (YYYY-MM-DD)")
+    parser.add_argument("--to", dest="date_to", type=str, default=None,
+                        help="Дата окончания (YYYY-MM-DD)")
+    parser.add_argument("--no-chart", action="store_true", help="Без графиков")
 
     args = parser.parse_args()
 
     # Создаём папку для данных
     os.makedirs("data", exist_ok=True)
 
-    if args.backtest:
+    symbol = args.symbol or settings.default_symbol
+    balance = args.balance or settings.paper_balance
+
+    if args.compare:
+        # Сравнение стратегий
+        if args.strategies:
+            strategy_names = [s.strip() for s in args.strategies.split(",")]
+        else:
+            strategy_names = list(STRATEGY_MAP.keys())
+
+        asyncio.run(run_compare(
+            strategy_names, symbol, balance,
+            args.date_from, args.date_to,
+        ))
+
+    elif args.backtest:
         strategy = args.strategy or settings.default_strategy.value
-        symbol = args.symbol or settings.default_symbol
-        balance = args.balance or settings.paper_balance
-        asyncio.run(run_backtest(strategy, symbol, balance))
+        asyncio.run(run_backtest(
+            strategy, symbol, balance,
+            args.date_from, args.date_to,
+            save_chart=not args.no_chart,
+        ))
+
     elif args.no_telegram:
         engine = TradingEngine(settings)
         if args.strategy:
@@ -167,6 +370,7 @@ def main():
         if args.symbol:
             engine.set_symbols([args.symbol])
         asyncio.run(run_without_telegram(engine))
+
     else:
         if not settings.telegram_bot_token:
             logger.error("TELEGRAM_BOT_TOKEN не задан! Используйте --no-telegram или задайте токен в .env")
