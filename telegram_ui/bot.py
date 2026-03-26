@@ -169,9 +169,16 @@ class TelegramBot:
         if not await self._check_auth(update):
             return
 
+        risk_labels = {
+            "conservative": "Conservative (SL 1.5%, TP 3%, 3x)",
+            "moderate": "Moderate (SL 2%, TP 4%, 5x)",
+            "aggressive": "Aggressive (SL 3%, TP 6%, 10x)",
+            "swing": "Swing (SL 10%, TP 25%, 2x)",
+        }
         keyboard = [
             [InlineKeyboardButton(
-                f"{'✅ ' if self.settings.risk_level == level else ''}{level.value}",
+                f"{'✅ ' if self.settings.risk_level == level else ''}"
+                f"{risk_labels.get(level.value, level.value)}",
                 callback_data=f"set_risk_{level.value}",
             )]
             for level in RiskLevel
@@ -185,7 +192,8 @@ class TelegramBot:
             f"Макс. плечо: `{current['max_leverage']}x`\n"
             f"Макс. позиций: `{current['max_open_positions']}`\n"
             f"Стоп-лосс: `{current['stop_loss_pct']}%`\n"
-            f"Тейк-профит: `{current['take_profit_pct']}%`"
+            f"Тейк-профит: `{current['take_profit_pct']}%`\n\n"
+            f"Влияет на бэктест и сравнение стратегий."
         )
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard),
                                          parse_mode="Markdown")
@@ -876,6 +884,8 @@ class TelegramBot:
                             f"Анализирую: `{strategy.name}`\n"
                             f"Готово: {idx}/{total_strategies}\n"
                             f"Свечей: {len(ohlcv)}\n"
+                            f"Риск: `{self.settings.risk_level.value}` | "
+                            f"SL {sl_pct}% | TP {tp_pct}% | {leverage}x\n"
                             f"Осталось: ~{eta_str}",
                             parse_mode="Markdown",
                         )
