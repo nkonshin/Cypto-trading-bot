@@ -891,45 +891,61 @@ class TelegramBot:
 
                 elapsed_total = _time.time() - start_time
                 elapsed_str = f"{int(elapsed_total)}с" if elapsed_total < 60 else f"{int(elapsed_total // 60)}м {int(elapsed_total % 60)}с"
-                await query.edit_message_text(
-                    f"🔬 *Сравнение завершено за {elapsed_str}*\n\n"
-                    f"`[████████████████████]` 100%\n"
-                    f"Стратегий: {len(results)} | Свечей: {len(ohlcv)}",
-                    parse_mode="Markdown",
-                )
 
                 if not results:
                     await query.edit_message_text("Нет результатов",
                                                   reply_markup=self._back_keyboard())
                     return
 
+                # Отправляем результаты с retry при таймауте
+                import asyncio as _asyncio
+
+                async def _send_with_retry(coro_func, retries=3, delay=3):
+                    for attempt in range(retries):
+                        try:
+                            return await coro_func()
+                        except Exception as send_err:
+                            if attempt < retries - 1:
+                                logger.warning(f"Telegram таймаут, повтор через {delay}с ({attempt+1}/{retries})")
+                                await _asyncio.sleep(delay)
+                            else:
+                                logger.error(f"Не удалось отправить после {retries} попыток: {send_err}")
+
                 text = format_comparison_table_telegram(results)
-                await query.edit_message_text(text, parse_mode="Markdown")
+                await _send_with_retry(lambda: query.edit_message_text(
+                    f"🔬 *Завершено за {elapsed_str}*\n\n" + text,
+                    parse_mode="Markdown",
+                ))
 
                 chart_bytes = plot_comparison(results)
                 if chart_bytes:
                     import io as _io
-                    await query.message.reply_photo(
+                    await _send_with_retry(lambda: query.message.reply_photo(
                         photo=_io.BytesIO(chart_bytes),
-                        caption=f"📊 Сравнение {len(results)} стратегий | {symbol} | {tf_labels.get(tf, tf)} | {period_labels.get(period, period)}",
-                    )
+                        caption=f"📊 {len(results)} стратегий | {symbol} | {tf_labels.get(tf, tf)} | {period_labels.get(period, period)}",
+                    ))
 
                 from backtesting.excel_export import export_comparison
                 import io as _io2
                 xlsx_bytes = export_comparison(results)
-                await query.message.reply_document(
+                await _send_with_retry(lambda: query.message.reply_document(
                     document=_io2.BytesIO(xlsx_bytes),
                     filename=f"comparison_{symbol.replace('/', '_')}_{tf}_{period}.xlsx",
                     caption="📋 Подробный отчёт — сравнение + сделки по каждой стратегии",
-                )
-                await query.message.reply_text(
+                ))
+
+                await _send_with_retry(lambda: query.message.reply_text(
                     "Выберите действие:",
                     reply_markup=self._main_menu_keyboard(),
-                )
+                ))
+
             except Exception as e:
                 logger.error(f"Ошибка сравнения: {e}", exc_info=True)
-                await query.edit_message_text(f"Ошибка сравнения: {e}",
-                                              reply_markup=self._back_keyboard())
+                try:
+                    await query.edit_message_text(f"Ошибка сравнения: {e}",
+                                                  reply_markup=self._back_keyboard())
+                except Exception:
+                    pass  # Если даже ошибку не можем отправить — не падаем
 
         elif data == "help":
             text = (
