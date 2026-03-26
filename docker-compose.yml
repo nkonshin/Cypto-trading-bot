@@ -4,6 +4,7 @@ services:
     container_name: crypto-bot
     restart: unless-stopped
     env_file: .env
+    network_mode: host
     volumes:
       - bot-data:/app/data
     # По умолчанию запускается в полном режиме (бот + Telegram).
