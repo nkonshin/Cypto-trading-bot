@@ -29,6 +29,7 @@ class StrategyName(str, Enum):
     SUPERTREND = "supertrend"
     MULTI_INDICATOR = "multi_indicator"
     ADAPTIVE = "adaptive"
+    MULTI_TF = "multi_tf"
 
 
 class Settings(BaseSettings):
