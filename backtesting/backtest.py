@@ -27,6 +27,11 @@ class BacktestTrade:
     pnl_pct: float = 0
     reason_entry: str = ""
     reason_exit: str = ""
+    entry_time: Optional[str] = None
+    exit_time: Optional[str] = None
+    stop_loss: float = 0
+    take_profit: float = 0
+    leverage: int = 1
 
 
 @dataclass
@@ -137,7 +142,7 @@ class Backtester:
 
                     if current["low"] <= sl_price:
                         open_trade = self._close_trade(
-                            open_trade, sl_price, i, balance, "Стоп-лосс"
+                            open_trade, sl_price, i, balance, "Стоп-лосс", df
                         )
                         balance += open_trade.pnl
                         trades.append(open_trade)
@@ -145,7 +150,7 @@ class Backtester:
 
                     elif current["high"] >= tp_price:
                         open_trade = self._close_trade(
-                            open_trade, tp_price, i, balance, "Тейк-профит"
+                            open_trade, tp_price, i, balance, "Тейк-профит", df
                         )
                         balance += open_trade.pnl
                         trades.append(open_trade)
@@ -157,7 +162,7 @@ class Backtester:
 
                     if current["high"] >= sl_price:
                         open_trade = self._close_trade(
-                            open_trade, sl_price, i, balance, "Стоп-лосс"
+                            open_trade, sl_price, i, balance, "Стоп-лосс", df
                         )
                         balance += open_trade.pnl
                         trades.append(open_trade)
@@ -165,7 +170,7 @@ class Backtester:
 
                     elif current["low"] <= tp_price:
                         open_trade = self._close_trade(
-                            open_trade, tp_price, i, balance, "Тейк-профит"
+                            open_trade, tp_price, i, balance, "Тейк-профит", df
                         )
                         balance += open_trade.pnl
                         trades.append(open_trade)
@@ -181,12 +186,25 @@ class Backtester:
                 position_cost = min(risk_amount / sl_pct_actual, balance * 0.1)
                 amount = position_cost * self.leverage / current["close"]
 
+                sl_pct_val = (signal.custom_sl_pct or self.stop_loss_pct) / 100
+                tp_pct_val = (signal.custom_tp_pct or self.take_profit_pct) / 100
+                if signal.type == SignalType.BUY:
+                    sl_price_calc = current["close"] * (1 - sl_pct_val)
+                    tp_price_calc = current["close"] * (1 + tp_pct_val)
+                else:
+                    sl_price_calc = current["close"] * (1 + sl_pct_val)
+                    tp_price_calc = current["close"] * (1 - tp_pct_val)
+
                 open_trade = BacktestTrade(
                     entry_idx=i,
                     side=signal.type.value,
                     entry_price=current["close"],
                     amount=amount,
                     reason_entry=signal.reason,
+                    entry_time=current["timestamp"].strftime("%Y-%m-%d %H:%M") if hasattr(current["timestamp"], "strftime") else str(current["timestamp"]),
+                    stop_loss=round(sl_price_calc, 2),
+                    take_profit=round(tp_price_calc, 2),
+                    leverage=self.leverage,
                 )
 
                 if signal.custom_sl_pct:
@@ -196,7 +214,7 @@ class Backtester:
 
             elif open_trade and signal.type == SignalType.CLOSE_LONG and open_trade.side == "buy":
                 open_trade = self._close_trade(
-                    open_trade, current["close"], i, balance, signal.reason
+                    open_trade, current["close"], i, balance, signal.reason, df
                 )
                 balance += open_trade.pnl
                 trades.append(open_trade)
@@ -204,7 +222,7 @@ class Backtester:
 
             elif open_trade and signal.type == SignalType.CLOSE_SHORT and open_trade.side == "sell":
                 open_trade = self._close_trade(
-                    open_trade, current["close"], i, balance, signal.reason
+                    open_trade, current["close"], i, balance, signal.reason, df
                 )
                 balance += open_trade.pnl
                 trades.append(open_trade)
@@ -229,7 +247,7 @@ class Backtester:
         if open_trade:
             last_price = df.iloc[-1]["close"]
             open_trade = self._close_trade(
-                open_trade, last_price, len(df) - 1, balance, "Конец бэктеста"
+                open_trade, last_price, len(df) - 1, balance, "Конец бэктеста", df
             )
             balance += open_trade.pnl
             trades.append(open_trade)
@@ -241,11 +259,15 @@ class Backtester:
         )
 
     def _close_trade(self, trade: BacktestTrade, exit_price: float,
-                     exit_idx: int, balance: float, reason: str) -> BacktestTrade:
+                     exit_idx: int, balance: float, reason: str,
+                     df: pd.DataFrame = None) -> BacktestTrade:
         """Закрывает сделку и рассчитывает PnL."""
         trade.exit_idx = exit_idx
         trade.exit_price = exit_price
         trade.reason_exit = reason
+        if df is not None and exit_idx < len(df):
+            ts = df.iloc[exit_idx]["timestamp"]
+            trade.exit_time = ts.strftime("%Y-%m-%d %H:%M") if hasattr(ts, "strftime") else str(ts)
 
         if trade.side == "buy":
             pnl_raw = (exit_price - trade.entry_price) * trade.amount

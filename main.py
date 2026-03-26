@@ -227,6 +227,13 @@ async def run_backtest(strategy_name: str, symbol: str, balance: float,
         plot_equity_curve(result, save_path=chart_path)
         print(f"График сохранён: {chart_path}")
 
+    # Сохраняем Excel-отчёт
+    from backtesting.excel_export import export_single_result
+    xlsx_path = f"data/backtest_{strategy_name}_{symbol.replace('/', '_')}.xlsx"
+    with open(xlsx_path, "wb") as f:
+        f.write(export_single_result(result))
+    print(f"Excel-отчёт сохранён: {xlsx_path}")
+
 
 # === Сравнение стратегий ===
 
@@ -300,7 +307,14 @@ async def run_compare(strategy_names: list[str], symbol: str, balance: float,
         path = f"data/backtest_{r.strategy}_{symbol.replace('/', '_')}.png"
         plot_equity_curve(r, save_path=path)
 
-    print(f"Индивидуальные графики сохранены в data/\n")
+    print(f"Индивидуальные графики сохранены в data/")
+
+    # Сохраняем Excel-отчёт
+    from backtesting.excel_export import export_comparison
+    xlsx_path = f"data/compare_{symbol.replace('/', '_')}.xlsx"
+    with open(xlsx_path, "wb") as f:
+        f.write(export_comparison(results))
+    print(f"Excel-отчёт сохранён: {xlsx_path}\n")
 
 
 # === Точка входа ===

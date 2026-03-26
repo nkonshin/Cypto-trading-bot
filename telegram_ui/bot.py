@@ -273,6 +273,16 @@ class TelegramBot:
                     caption=f"📊 {strategy.name} | {symbol}",
                 )
 
+            # Отправляем Excel-отчёт
+            from backtesting.excel_export import export_single_result
+            import io as _io
+            xlsx_bytes = export_single_result(result)
+            await update.message.reply_document(
+                document=_io.BytesIO(xlsx_bytes),
+                filename=f"backtest_{strategy_name}_{symbol.replace('/', '_')}.xlsx",
+                caption="📋 Подробный отчёт по сделкам",
+            )
+
         except Exception as e:
             logger.error(f"Ошибка бэктеста: {e}", exc_info=True)
             await update.message.reply_text(f"Ошибка бэктеста: {e}")
@@ -345,6 +355,16 @@ class TelegramBot:
                     photo=io.BytesIO(chart_bytes),
                     caption=f"📊 Сравнение {len(results)} стратегий | {symbol}",
                 )
+
+            # Отправляем Excel-отчёт
+            from backtesting.excel_export import export_comparison
+            import io as _io
+            xlsx_bytes = export_comparison(results)
+            await update.message.reply_document(
+                document=_io.BytesIO(xlsx_bytes),
+                filename=f"comparison_{symbol.replace('/', '_')}.xlsx",
+                caption="📋 Подробный отчёт — сравнение + сделки по каждой стратегии",
+            )
 
         except Exception as e:
             logger.error(f"Ошибка сравнения: {e}", exc_info=True)
@@ -696,6 +716,15 @@ class TelegramBot:
                         photo=_io.BytesIO(chart_bytes),
                         caption=f"📊 {strategy.name} | {symbol}",
                     )
+
+                from backtesting.excel_export import export_single_result
+                import io as _io2
+                xlsx_bytes = export_single_result(result)
+                await query.message.reply_document(
+                    document=_io2.BytesIO(xlsx_bytes),
+                    filename=f"backtest_{name}_{symbol.replace('/', '_')}.xlsx",
+                    caption="📋 Подробный отчёт по сделкам",
+                )
                 await query.message.reply_text(
                     "Выберите действие:",
                     reply_markup=self._main_menu_keyboard(),
@@ -750,6 +779,15 @@ class TelegramBot:
                         photo=_io.BytesIO(chart_bytes),
                         caption=f"📊 Сравнение {len(results)} стратегий | {symbol}",
                     )
+
+                from backtesting.excel_export import export_comparison
+                import io as _io2
+                xlsx_bytes = export_comparison(results)
+                await query.message.reply_document(
+                    document=_io2.BytesIO(xlsx_bytes),
+                    filename=f"comparison_{symbol.replace('/', '_')}.xlsx",
+                    caption="📋 Подробный отчёт — сравнение + сделки по каждой стратегии",
+                )
                 await query.message.reply_text(
                     "Выберите действие:",
                     reply_markup=self._main_menu_keyboard(),
