@@ -52,6 +52,32 @@ python main.py --no-telegram
 python main.py --backtest --strategy multi_indicator --symbol BTC/USDT --balance 100
 ```
 
+### Docker (рекомендуется)
+
+```bash
+# Скопировать и заполнить .env
+cp .env.example .env
+
+# Запуск бота
+docker compose up -d
+
+# Логи
+docker compose logs -f bot
+
+# Остановка
+docker compose down
+```
+
+Для бэктеста или сравнения стратегий через Docker:
+
+```bash
+# Бэктест
+docker compose run --rm bot --backtest --strategy multi_indicator --symbol BTC/USDT
+
+# Сравнение всех стратегий
+docker compose run --rm bot --compare
+```
+
 ## Управление через Telegram
 
 | Команда | Описание |

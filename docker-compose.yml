@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: crypto-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - bot-data:/app/data
+    # По умолчанию запускается в полном режиме (бот + Telegram).
+    # Для других режимов раскомментируй нужную строку:
+    # command: ["--no-telegram"]
+    # command: ["--backtest", "--strategy", "multi_indicator", "--symbol", "BTC/USDT"]
+    # command: ["--compare"]
+
+volumes:
+  bot-data:
