@@ -25,6 +25,32 @@ class TelegramBot:
         self.engine = engine
         self._app: Application = None
 
+    def _main_menu_keyboard(self) -> InlineKeyboardMarkup:
+        """Возвращает клавиатуру главного меню."""
+        keyboard = [
+            [InlineKeyboardButton("📊 Статус", callback_data="status"),
+             InlineKeyboardButton("💰 Баланс", callback_data="balance")],
+            [InlineKeyboardButton("▶️ Запустить", callback_data="bot_start"),
+             InlineKeyboardButton("⏹ Остановить", callback_data="bot_stop")],
+            [InlineKeyboardButton("📈 Стратегии", callback_data="strategies"),
+             InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
+            [InlineKeyboardButton("📜 История", callback_data="history"),
+             InlineKeyboardButton("🔬 Бэктест", callback_data="backtest_menu")],
+            [InlineKeyboardButton("❓ Справка", callback_data="help"),
+             InlineKeyboardButton("📖 О стратегиях", callback_data="strategies_info")],
+            [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    @staticmethod
+    def _back_button() -> list[InlineKeyboardButton]:
+        """Возвращает кнопку возврата в главное меню."""
+        return [InlineKeyboardButton("◀️ Главное меню", callback_data="back_main")]
+
+    def _back_keyboard(self) -> InlineKeyboardMarkup:
+        """Возвращает клавиатуру только с кнопкой назад."""
+        return InlineKeyboardMarkup([self._back_button()])
+
     def _is_authorized(self, user_id: int) -> bool:
         """Проверяет авторизацию пользователя."""
         allowed = self.settings.allowed_user_ids
@@ -43,23 +69,11 @@ class TelegramBot:
         if not await self._check_auth(update):
             return
 
-        keyboard = [
-            [InlineKeyboardButton("📊 Статус", callback_data="status"),
-             InlineKeyboardButton("💰 Баланс", callback_data="balance")],
-            [InlineKeyboardButton("▶️ Запустить", callback_data="bot_start"),
-             InlineKeyboardButton("⏹ Остановить", callback_data="bot_stop")],
-            [InlineKeyboardButton("📈 Стратегии", callback_data="strategies"),
-             InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
-            [InlineKeyboardButton("📜 История", callback_data="history"),
-             InlineKeyboardButton("🔬 Бэктест", callback_data="backtest_menu")],
-            [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
-        ]
-
         await update.message.reply_text(
             "🤖 *Crypto Trading Bot*\n\n"
             "Автоматическая торговля криптовалютой.\n"
             "Выберите действие:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_markup=self._main_menu_keyboard(),
             parse_mode="Markdown",
         )
 
@@ -405,19 +419,24 @@ class TelegramBot:
 
         text = (
             "🤖 *Crypto Trading Bot — Команды:*\n\n"
+            "*Основные:*\n"
             "/start — Главное меню\n"
             "/status — Статус бота\n"
             "/balance — Баланс и PnL\n"
             "/trades — Открытые позиции\n"
-            "/history — История сделок\n"
+            "/history — История сделок\n\n"
+            "*Настройки:*\n"
             "/strategy — Выбор стратегии\n"
             "/risk — Управление рисками\n"
             "/symbol — Торговые пары\n"
-            "/mode — Режим торговли\n"
+            "/mode — Режим торговли\n\n"
+            "*Аналитика:*\n"
             "/backtest — Бэктест стратегии\n"
             "/compare — Сравнение стратегий\n"
-            "/stats — Статистика стратегии\n"
-            "/help — Справка\n\n"
+            "/stats — Статистика стратегии\n\n"
+            "*Справка:*\n"
+            "/help — Эта справка\n"
+            "/info — Подробное описание стратегий\n\n"
             "*Бэктест с датами:*\n"
             "`/backtest grid 2025-01-01 2025-06-01`\n\n"
             "*Сравнение стратегий:*\n"
@@ -429,7 +448,67 @@ class TelegramBot:
             "• `grid` — Сеточная торговля\n"
             "• `smart_dca` — Умное усреднение\n"
             "• `supertrend` — Агрессивная трендовая\n"
-            "• `multi_indicator` — Консенсус 6 индикаторов"
+            "• `multi_indicator` — Консенсус 6 индикаторов\n\n"
+            "*Ключевые термины:*\n"
+            "• *PnL* — Profit and Loss, прибыль/убыток\n"
+            "• *Win Rate* — процент прибыльных сделок\n"
+            "• *Просадка (DD)* — максимальное падение баланса от пика\n"
+            "• *Профит-фактор (PF)* — отношение прибыли к убыткам (>1 = прибыльно)\n"
+            "• *Sharpe Ratio* — доходность с учётом риска (>1 = хорошо)\n"
+            "• *SL* — Stop Loss, автоматическое закрытие при убытке\n"
+            "• *TP* — Take Profit, автоматическое закрытие при прибыли\n"
+            "• *Paper Trading* — торговля на виртуальные деньги (без риска)"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    async def cmd_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Команда /info — подробное описание стратегий."""
+        if not await self._check_auth(update):
+            return
+
+        text = (
+            "📖 *Стратегии — подробное описание*\n\n"
+            "*1. EMA Crossover* (Умеренный риск)\n"
+            "Тип: Трендовая\n"
+            "Индикаторы: EMA 9, EMA 21, EMA 200, объём\n"
+            "Сигнал покупки: EMA 9 пересекает EMA 21 снизу вверх + цена выше EMA 200\n"
+            "Сигнал продажи: EMA 9 пересекает EMA 21 сверху вниз + цена ниже EMA 200\n"
+            "Лучше всего: в трендовых рынках\n"
+            "Таймфрейм: 1h\n\n"
+            "*2. RSI Mean Reversion* (Консервативный)\n"
+            "Тип: Контртрендовая (возврат к среднему)\n"
+            "Индикаторы: RSI (14), Bollinger Bands (20,2), Stochastic RSI\n"
+            "Сигнал покупки: RSI < 30 или цена ниже нижней полосы Боллинджера\n"
+            "Сигнал продажи: RSI > 70 или цена выше верхней полосы Боллинджера\n"
+            "Лучше всего: в боковом рынке (флэт)\n"
+            "Таймфрейм: 1h\n\n"
+            "*3. Grid Trading* (Консервативный)\n"
+            "Тип: Сеточная торговля\n"
+            "Подход: ордера на равных ценовых уровнях в диапазоне\n"
+            "Индикаторы: ATR (для ширины сетки), ADX < 30 (фильтр тренда)\n"
+            "Лучше всего: в боковике, при низкой волатильности\n"
+            "Таймфрейм: 15m\n\n"
+            "*4. Smart DCA* (Консервативный)\n"
+            "Тип: Умное усреднение\n"
+            "Подход: докупка на просадках с подтверждением индикаторов\n"
+            "Индикаторы: RSI, EMA 20/50, MACD, объём\n"
+            "5 уровней докупки, каждый следующий x1.5 по объёму\n"
+            "Лучше всего: для долгосрочного накопления, в нисходящем тренде\n"
+            "Таймфрейм: 4h\n\n"
+            "*5. Supertrend* (Агрессивный)\n"
+            "Тип: Агрессивная трендовая\n"
+            "Индикаторы: Supertrend (на основе ATR), ADX (сила тренда), объём\n"
+            "Сигнал: разворот Supertrend + ADX > 20\n"
+            "Закрытие: ADX падает ниже 15 (тренд слабеет)\n"
+            "Лучше всего: сильные тренды, фьючерсы с плечом\n"
+            "Таймфрейм: 1h\n\n"
+            "*6. Multi Indicator* (Умеренный) — по умолчанию\n"
+            "Тип: Консенсус 6 индикаторов\n"
+            "Индикаторы: EMA (9/21/50), RSI, MACD, Bollinger Bands, OBV, ATR\n"
+            "Решение: сделка открывается при 4+ совпадающих сигналах из 6\n"
+            "SL/TP: динамический, на основе ATR\n"
+            "Лучше всего: универсальная, работает на любом рынке\n"
+            "Таймфрейм: 1h"
         )
         await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -448,7 +527,9 @@ class TelegramBot:
 
         if data == "status":
             status = await self.engine.get_status()
-            await query.edit_message_text(self._format_status(status), parse_mode="Markdown")
+            await query.edit_message_text(self._format_status(status),
+                                          reply_markup=self._back_keyboard(),
+                                          parse_mode="Markdown")
 
         elif data == "balance":
             status = await self.engine.get_status()
@@ -458,21 +539,26 @@ class TelegramBot:
                 f"PnL сегодня: `{status['daily_pnl']:+.2f}` USDT\n"
                 f"PnL всего: `{status['total_pnl']:+.2f}` USDT"
             )
-            await query.edit_message_text(text, parse_mode="Markdown")
+            await query.edit_message_text(text, reply_markup=self._back_keyboard(),
+                                          parse_mode="Markdown")
 
         elif data == "bot_start":
             if not self.engine._running:
                 await self.engine.start()
-                await query.edit_message_text("▶️ Бот запущен!")
+                await query.edit_message_text("▶️ Бот запущен!",
+                                              reply_markup=self._back_keyboard())
             else:
-                await query.edit_message_text("Бот уже работает")
+                await query.edit_message_text("Бот уже работает",
+                                              reply_markup=self._back_keyboard())
 
         elif data == "bot_stop":
             if self.engine._running:
                 self.engine._running = False
-                await query.edit_message_text("⏹ Бот остановлен")
+                await query.edit_message_text("⏹ Бот остановлен",
+                                              reply_markup=self._back_keyboard())
             else:
-                await query.edit_message_text("Бот уже остановлен")
+                await query.edit_message_text("Бот уже остановлен",
+                                              reply_markup=self._back_keyboard())
 
         elif data == "strategies":
             keyboard = []
@@ -493,33 +579,39 @@ class TelegramBot:
         elif data.startswith("set_strategy_"):
             name = data.replace("set_strategy_", "")
             result = self.engine.set_strategy(name)
-            await query.edit_message_text(f"📈 {result}")
+            await query.edit_message_text(f"📈 {result}",
+                                          reply_markup=self._back_keyboard())
 
         elif data.startswith("set_risk_"):
             level = data.replace("set_risk_", "")
             self.settings.risk_level = RiskLevel(level)
             self.engine.risk_manager.risk_params = self.settings.get_risk_params()
-            await query.edit_message_text(f"⚙️ Уровень риска: {level}")
+            await query.edit_message_text(f"⚙️ Уровень риска: {level}",
+                                          reply_markup=self._back_keyboard())
 
         elif data == "set_mode_paper":
             self.settings.paper_trading = True
-            await query.edit_message_text("📝 Режим: Paper Trading")
+            await query.edit_message_text("📝 Режим: Paper Trading",
+                                          reply_markup=self._back_keyboard())
 
         elif data == "set_mode_live":
             self.settings.paper_trading = False
             await query.edit_message_text(
                 "⚠️ *ВНИМАНИЕ: Live Trading активирован!*\n"
                 "Бот будет торговать реальными средствами.",
+                reply_markup=self._back_keyboard(),
                 parse_mode="Markdown",
             )
 
         elif data == "set_type_spot":
             self.settings.trading_mode = TradingMode.SPOT
-            await query.edit_message_text("📊 Тип: Спот")
+            await query.edit_message_text("📊 Тип: Спот",
+                                          reply_markup=self._back_keyboard())
 
         elif data == "set_type_futures":
             self.settings.trading_mode = TradingMode.FUTURES
-            await query.edit_message_text("📊 Тип: Фьючерсы")
+            await query.edit_message_text("📊 Тип: Фьючерсы",
+                                          reply_markup=self._back_keyboard())
 
         elif data == "settings":
             status = await self.engine.get_status()
@@ -543,13 +635,15 @@ class TelegramBot:
         elif data == "history":
             trades = await self.engine.db.get_trades_history(limit=5)
             if not trades:
-                await query.edit_message_text("📭 История пуста")
+                await query.edit_message_text("📭 История пуста",
+                                              reply_markup=self._back_keyboard())
                 return
             text = "📜 *Последние 5 сделок:*\n\n"
             for t in trades:
                 emoji = "✅" if t["pnl"] > 0 else "❌" if t["pnl"] < 0 else "⏳"
                 text += f"{emoji} {t['symbol']} {t['side'].upper()} | PnL: `{t['pnl']:+.2f}`\n"
-            await query.edit_message_text(text, parse_mode="Markdown")
+            await query.edit_message_text(text, reply_markup=self._back_keyboard(),
+                                          parse_mode="Markdown")
 
         elif data == "backtest_menu":
             keyboard = []
@@ -602,9 +696,14 @@ class TelegramBot:
                         photo=_io.BytesIO(chart_bytes),
                         caption=f"📊 {strategy.name} | {symbol}",
                     )
+                await query.message.reply_text(
+                    "Выберите действие:",
+                    reply_markup=self._main_menu_keyboard(),
+                )
             except Exception as e:
                 logger.error(f"Ошибка бэктеста: {e}", exc_info=True)
-                await query.edit_message_text(f"Ошибка бэктеста: {e}")
+                await query.edit_message_text(f"Ошибка бэктеста: {e}",
+                                              reply_markup=self._back_keyboard())
 
         elif data == "compare_all":
             await query.edit_message_text(
@@ -637,7 +736,8 @@ class TelegramBot:
                     results.append(result)
 
                 if not results:
-                    await query.edit_message_text("Нет результатов")
+                    await query.edit_message_text("Нет результатов",
+                                                  reply_markup=self._back_keyboard())
                     return
 
                 text = format_comparison_table_telegram(results)
@@ -650,25 +750,101 @@ class TelegramBot:
                         photo=_io.BytesIO(chart_bytes),
                         caption=f"📊 Сравнение {len(results)} стратегий | {symbol}",
                     )
+                await query.message.reply_text(
+                    "Выберите действие:",
+                    reply_markup=self._main_menu_keyboard(),
+                )
             except Exception as e:
                 logger.error(f"Ошибка сравнения: {e}", exc_info=True)
-                await query.edit_message_text(f"Ошибка сравнения: {e}")
+                await query.edit_message_text(f"Ошибка сравнения: {e}",
+                                              reply_markup=self._back_keyboard())
+
+        elif data == "help":
+            text = (
+                "🤖 *Crypto Trading Bot — Команды:*\n\n"
+                "*Основные:*\n"
+                "/start — Главное меню\n"
+                "/status — Статус бота\n"
+                "/balance — Баланс и PnL\n"
+                "/trades — Открытые позиции\n"
+                "/history — История сделок\n\n"
+                "*Настройки:*\n"
+                "/strategy — Выбор стратегии\n"
+                "/risk — Управление рисками\n"
+                "/symbol — Торговые пары\n"
+                "/mode — Режим торговли\n\n"
+                "*Аналитика:*\n"
+                "/backtest — Бэктест стратегии\n"
+                "/compare — Сравнение стратегий\n"
+                "/stats — Статистика стратегии\n\n"
+                "*Справка:*\n"
+                "/help — Эта справка\n"
+                "/info — Подробное описание стратегий\n\n"
+                "*Ключевые термины:*\n"
+                "• *PnL* — Profit and Loss, прибыль/убыток\n"
+                "• *Win Rate* — процент прибыльных сделок\n"
+                "• *Просадка (DD)* — максимальное падение баланса от пика\n"
+                "• *Профит-фактор (PF)* — отношение прибыли к убыткам (>1 = прибыльно)\n"
+                "• *Sharpe Ratio* — доходность с учётом риска (>1 = хорошо)\n"
+                "• *SL* — Stop Loss, автоматическое закрытие при убытке\n"
+                "• *TP* — Take Profit, автоматическое закрытие при прибыли\n"
+                "• *Paper Trading* — торговля на виртуальные деньги (без риска)"
+            )
+            await query.edit_message_text(text, reply_markup=self._back_keyboard(),
+                                          parse_mode="Markdown")
+
+        elif data == "strategies_info":
+            text = (
+                "📖 *Стратегии — подробное описание*\n\n"
+                "*1. EMA Crossover* (Умеренный риск)\n"
+                "Тип: Трендовая\n"
+                "Индикаторы: EMA 9, EMA 21, EMA 200, объём\n"
+                "Сигнал покупки: EMA 9 пересекает EMA 21 снизу вверх + цена выше EMA 200\n"
+                "Сигнал продажи: EMA 9 пересекает EMA 21 сверху вниз + цена ниже EMA 200\n"
+                "Лучше всего: в трендовых рынках\n"
+                "Таймфрейм: 1h\n\n"
+                "*2. RSI Mean Reversion* (Консервативный)\n"
+                "Тип: Контртрендовая (возврат к среднему)\n"
+                "Индикаторы: RSI (14), Bollinger Bands (20,2), Stochastic RSI\n"
+                "Сигнал покупки: RSI < 30 или цена ниже нижней полосы Боллинджера\n"
+                "Сигнал продажи: RSI > 70 или цена выше верхней полосы Боллинджера\n"
+                "Лучше всего: в боковом рынке (флэт)\n"
+                "Таймфрейм: 1h\n\n"
+                "*3. Grid Trading* (Консервативный)\n"
+                "Тип: Сеточная торговля\n"
+                "Подход: ордера на равных ценовых уровнях в диапазоне\n"
+                "Индикаторы: ATR (для ширины сетки), ADX < 30 (фильтр тренда)\n"
+                "Лучше всего: в боковике, при низкой волатильности\n"
+                "Таймфрейм: 15m\n\n"
+                "*4. Smart DCA* (Консервативный)\n"
+                "Тип: Умное усреднение\n"
+                "Подход: докупка на просадках с подтверждением индикаторов\n"
+                "Индикаторы: RSI, EMA 20/50, MACD, объём\n"
+                "5 уровней докупки, каждый следующий x1.5 по объёму\n"
+                "Лучше всего: для долгосрочного накопления, в нисходящем тренде\n"
+                "Таймфрейм: 4h\n\n"
+                "*5. Supertrend* (Агрессивный)\n"
+                "Тип: Агрессивная трендовая\n"
+                "Индикаторы: Supertrend (на основе ATR), ADX (сила тренда), объём\n"
+                "Сигнал: разворот Supertrend + ADX > 20\n"
+                "Закрытие: ADX падает ниже 15 (тренд слабеет)\n"
+                "Лучше всего: сильные тренды, фьючерсы с плечом\n"
+                "Таймфрейм: 1h\n\n"
+                "*6. Multi Indicator* (Умеренный) — по умолчанию\n"
+                "Тип: Консенсус 6 индикаторов\n"
+                "Индикаторы: EMA (9/21/50), RSI, MACD, Bollinger Bands, OBV, ATR\n"
+                "Решение: сделка открывается при 4+ совпадающих сигналах из 6\n"
+                "SL/TP: динамический, на основе ATR\n"
+                "Лучше всего: универсальная, работает на любом рынке\n"
+                "Таймфрейм: 1h"
+            )
+            await query.edit_message_text(text, reply_markup=self._back_keyboard(),
+                                          parse_mode="Markdown")
 
         elif data == "back_main":
-            keyboard = [
-                [InlineKeyboardButton("📊 Статус", callback_data="status"),
-                 InlineKeyboardButton("💰 Баланс", callback_data="balance")],
-                [InlineKeyboardButton("▶️ Запустить", callback_data="bot_start"),
-                 InlineKeyboardButton("⏹ Остановить", callback_data="bot_stop")],
-                [InlineKeyboardButton("📈 Стратегии", callback_data="strategies"),
-                 InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
-                [InlineKeyboardButton("📜 История", callback_data="history"),
-                 InlineKeyboardButton("🔬 Бэктест", callback_data="backtest_menu")],
-                [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
-            ]
             await query.edit_message_text(
                 "🤖 *Crypto Trading Bot*\nВыберите действие:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
+                reply_markup=self._main_menu_keyboard(),
                 parse_mode="Markdown",
             )
 
@@ -756,6 +932,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("stats", self.cmd_stats))
         self._app.add_handler(CommandHandler("mode", self.cmd_mode))
         self._app.add_handler(CommandHandler("help", self.cmd_help))
+        self._app.add_handler(CommandHandler("info", self.cmd_info))
 
         # Callback для inline кнопок
         self._app.add_handler(CallbackQueryHandler(self.handle_callback))

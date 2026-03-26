@@ -301,7 +301,7 @@ def format_comparison_table_telegram(results: list[BacktestResult]) -> str:
             f"{medal} *{r.strategy}*\n"
             f"  {pnl_emoji} PnL: `{r.total_pnl_pct:+.1f}%` ({r.total_pnl:+.2f} USDT)\n"
             f"  Win: `{r.win_rate:.0f}%` | Сделок: `{r.total_trades}` | "
-            f"DD: `{r.max_drawdown_pct:.1f}%` | PF: `{r.profit_factor:.2f}`\n"
+            f"Просадка: `{r.max_drawdown_pct:.1f}%` | Профит-фактор: `{r.profit_factor:.2f}`\n"
         )
 
     return "\n".join(lines)
