@@ -35,46 +35,56 @@ class RsiMeanReversionStrategy(BaseStrategy):
 
         df = df.copy()
 
-        # RSI
         df["rsi"] = ta.momentum.rsi(df["close"], window=self.rsi_period)
 
-        # Bollinger Bands
         bb = ta.volatility.BollingerBands(df["close"], window=self.bb_period, window_dev=self.bb_std)
         df["bb_upper"] = bb.bollinger_hband()
         df["bb_lower"] = bb.bollinger_lband()
         df["bb_mid"] = bb.bollinger_mavg()
-        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_mid"]
+        df["bb_width"] = df.apply(
+            lambda r: (r["bb_upper"] - r["bb_lower"]) / r["bb_mid"] if r["bb_mid"] != 0 else 0, axis=1
+        )
 
-        # Stochastic RSI для дополнительного подтверждения
         df["stoch_rsi"] = ta.momentum.stochrsi(df["close"], window=self.rsi_period)
 
         last = df.iloc[-1]
         prev = df.iloc[-2]
 
+        rsi = self.safe_val(last["rsi"], 50)
+        close = self.safe_val(last["close"], 1.0)
+        bb_upper = self.safe_val(last["bb_upper"], close)
+        bb_lower = self.safe_val(last["bb_lower"], close)
+        bb_mid = self.safe_val(last["bb_mid"], close)
+
+        if rsi == 50 and self.safe_val(prev["rsi"], 50) == 50:
+            return self._hold_signal(symbol, close, {"reason": "RSI не готов"})
+
         indicators = {
-            "rsi": round(last["rsi"], 1),
-            "stoch_rsi": round(last["stoch_rsi"], 2),
-            "bb_upper": round(last["bb_upper"], 2),
-            "bb_lower": round(last["bb_lower"], 2),
-            "bb_width": round(last["bb_width"], 4),
-            "price": round(last["close"], 2),
+            "rsi": round(rsi, 1),
+            "stoch_rsi": round(self.safe_val(last["stoch_rsi"]), 2),
+            "bb_upper": round(bb_upper, 2),
+            "bb_lower": round(bb_lower, 2),
+            "bb_width": round(self.safe_val(last["bb_width"]), 4),
+            "price": round(close, 2),
         }
 
-        # RSI дивергенция (бычья): цена делает новый лоу, RSI — нет
+        recent_close = df["close"].iloc[-5:].dropna()
+        recent_rsi = df["rsi"].iloc[-5:].dropna()
+
         bullish_div = (
-            last["close"] < df["close"].iloc[-5:].min() * 1.001
-            and last["rsi"] > df["rsi"].iloc[-5:].min()
+            len(recent_close) >= 3 and len(recent_rsi) >= 3
+            and close < recent_close.min() * 1.001
+            and rsi > recent_rsi.min()
         )
 
-        # RSI дивергенция (медвежья)
         bearish_div = (
-            last["close"] > df["close"].iloc[-5:].max() * 0.999
-            and last["rsi"] < df["rsi"].iloc[-5:].max()
+            len(recent_close) >= 3 and len(recent_rsi) >= 3
+            and close > recent_close.max() * 0.999
+            and rsi < recent_rsi.max()
         )
 
-        # BUY: RSI перепродан + цена у нижней BB
-        if last["rsi"] < self.rsi_oversold and last["close"] <= last["bb_lower"] * 1.005:
-            strength = (self.rsi_oversold - last["rsi"]) / self.rsi_oversold
+        if rsi < self.rsi_oversold and close <= bb_lower * 1.005:
+            strength = self.safe_div(self.rsi_oversold - rsi, self.rsi_oversold)
             if bullish_div:
                 strength = min(1.0, strength + 0.3)
             return Signal(
@@ -83,13 +93,12 @@ class RsiMeanReversionStrategy(BaseStrategy):
                 reason=f"RSI={last['rsi']:.0f} перепродан, цена у нижней BB"
                        + (", бычья дивергенция" if bullish_div else ""),
                 indicators=indicators,
-                custom_sl_pct=1.5,  # тесный стоп для mean reversion
+                custom_sl_pct=1.5,
                 custom_tp_pct=3.0,
             )
 
-        # SELL: RSI перекуплен + цена у верхней BB
-        if last["rsi"] > self.rsi_overbought and last["close"] >= last["bb_upper"] * 0.995:
-            strength = (last["rsi"] - self.rsi_overbought) / (100 - self.rsi_overbought)
+        if rsi > self.rsi_overbought and close >= bb_upper * 0.995:
+            strength = self.safe_div(rsi - self.rsi_overbought, 100 - self.rsi_overbought)
             if bearish_div:
                 strength = min(1.0, strength + 0.3)
             return Signal(
@@ -102,7 +111,6 @@ class RsiMeanReversionStrategy(BaseStrategy):
                 custom_tp_pct=3.0,
             )
 
-        # Close signals: RSI возвращается к нейтральной зоне
         if prev["rsi"] < 45 and last["rsi"] > 50 and last["close"] > last["bb_mid"]:
             return Signal(
                 type=SignalType.CLOSE_SHORT, strength=0.5, price=last["close"],
