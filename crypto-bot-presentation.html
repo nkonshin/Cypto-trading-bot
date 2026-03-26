@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crypto Trading Bot — Презентация проекта</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+    --bg: #0a0e17;
+    --surface: #111827;
+    --surface2: #1a2235;
+    --surface-elevated: #1f2b42;
+    --border: rgba(16, 185, 129, 0.08);
+    --border-bright: rgba(16, 185, 129, 0.2);
+    --text: #e5e7eb;
+    --text-dim: #6b7280;
+    --accent: #10b981;
+    --accent-dim: rgba(16, 185, 129, 0.08);
+    --accent2: #f59e0b;
+    --accent2-dim: rgba(245, 158, 11, 0.08);
+    --code-bg: #060a12;
+    --green: #10b981;
+    --green-dim: rgba(16, 185, 129, 0.1);
+    --red: #ef4444;
+    --red-dim: rgba(239, 68, 68, 0.1);
+    --blue: #3b82f6;
+    --blue-dim: rgba(59, 130, 246, 0.1);
+    --purple: #8b5cf6;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: var(--font-body); color: var(--text); background: var(--bg); overflow: hidden; }
+
+  .deck { height: 100dvh; overflow-y: auto; scroll-snap-type: y mandatory; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+
+  .slide {
+    height: 100dvh; scroll-snap-align: start; overflow: hidden; position: relative;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: clamp(40px, 6vh, 80px) clamp(40px, 8vw, 120px);
+    isolation: isolate;
+    opacity: 0; transform: translateY(40px) scale(0.98);
+    transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1), transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .slide.visible { opacity: 1; transform: none; }
+  .slide .reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1), transform 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+  .slide.visible .reveal { opacity: 1; transform: none; }
+  .slide.visible .reveal:nth-child(1) { transition-delay: 0.1s; }
+  .slide.visible .reveal:nth-child(2) { transition-delay: 0.2s; }
+  .slide.visible .reveal:nth-child(3) { transition-delay: 0.3s; }
+  .slide.visible .reveal:nth-child(4) { transition-delay: 0.4s; }
+  .slide.visible .reveal:nth-child(5) { transition-delay: 0.5s; }
+  .slide.visible .reveal:nth-child(6) { transition-delay: 0.6s; }
+  .slide.visible .reveal:nth-child(7) { transition-delay: 0.7s; }
+  .slide.visible .reveal:nth-child(8) { transition-delay: 0.8s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .slide, .slide .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  }
+
+  /* NAV */
+  .deck-progress { position: fixed; top: 0; left: 0; height: 3px; background: var(--accent); z-index: 100; transition: width 0.3s ease; pointer-events: none; }
+  .deck-dots { position: fixed; right: clamp(12px, 2vw, 24px); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 100; padding: 6px; background: rgba(10,14,23,0.7); border-radius: 20px; backdrop-filter: blur(4px); }
+  .deck-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); opacity: 0.3; border: none; padding: 0; cursor: pointer; transition: opacity 0.2s, transform 0.2s; }
+  .deck-dot:hover { opacity: 0.6; }
+  .deck-dot.active { opacity: 1; transform: scale(1.5); background: var(--accent); }
+  .deck-counter { position: fixed; bottom: clamp(12px, 2vh, 24px); right: clamp(12px, 2vw, 24px); font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); z-index: 100; }
+  .deck-hints { position: fixed; bottom: clamp(12px, 2vh, 24px); left: 50%; transform: translateX(-50%); font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); opacity: 0.6; z-index: 100; transition: opacity 0.5s; white-space: nowrap; }
+  .deck-hints.faded { opacity: 0; pointer-events: none; }
+
+  /* TYPOGRAPHY */
+  .slide__display { font-size: clamp(44px, 8vw, 100px); font-weight: 800; letter-spacing: -3px; line-height: 0.95; text-wrap: balance; }
+  .slide__heading { font-size: clamp(28px, 4.5vw, 48px); font-weight: 700; letter-spacing: -1px; line-height: 1.15; text-wrap: balance; }
+  .slide__body { font-size: clamp(15px, 2vw, 21px); line-height: 1.65; color: var(--text-dim); }
+  .slide__subtitle { font-family: var(--font-mono); font-size: clamp(12px, 1.5vw, 18px); color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+  .slide__label { font-family: var(--font-mono); font-size: clamp(10px, 1.2vw, 13px); font-weight: 600; text-transform: uppercase; letter-spacing: 2px; color: var(--accent); margin-bottom: 12px; }
+
+  /* TITLE SLIDE */
+  .slide--title { justify-content: center; align-items: center; text-align: center; background-image: radial-gradient(ellipse at 50% 30%, rgba(16,185,129,0.06) 0%, transparent 60%); }
+  .slide--title .slide__display { color: var(--accent); }
+
+  /* DIVIDER */
+  .slide--divider { justify-content: center; }
+  .slide--divider .slide__number { font-size: clamp(100px, 22vw, 260px); font-weight: 200; line-height: 0.85; opacity: 0.04; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -55%); pointer-events: none; color: var(--accent); }
+
+  /* GRID LAYOUTS */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(20px, 3vw, 40px); width: 100%; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: clamp(16px, 2.5vw, 32px); width: 100%; }
+  .grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: clamp(24px, 4vw, 60px); align-items: center; width: 100%; }
+  .grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: clamp(24px, 4vw, 60px); align-items: center; width: 100%; }
+
+  /* CARDS */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: clamp(16px, 2.5vw, 28px);
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--border-bright); }
+  .card__title { font-size: clamp(15px, 1.8vw, 20px); font-weight: 600; margin-bottom: 8px; }
+  .card__text { font-size: clamp(13px, 1.5vw, 16px); color: var(--text-dim); line-height: 1.5; }
+  .card__badge { font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 99px; display: inline-block; margin-bottom: 10px; }
+  .badge--green { background: var(--green-dim); color: var(--green); }
+  .badge--red { background: var(--red-dim); color: var(--red); }
+  .badge--blue { background: var(--blue-dim); color: var(--blue); }
+  .badge--amber { background: var(--accent2-dim); color: var(--accent2); }
+
+  /* TABLE */
+  .slide-table { width: 100%; border-collapse: collapse; font-size: clamp(13px, 1.5vw, 16px); }
+  .slide-table th { font-family: var(--font-mono); font-size: clamp(10px, 1.1vw, 12px); text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--border-bright); }
+  .slide-table td { padding: 10px 16px; border-bottom: 1px solid var(--border); color: var(--text-dim); }
+  .slide-table tr:hover td { background: var(--accent-dim); }
+  .slide-table .highlight { color: var(--text); font-weight: 600; }
+
+  /* STAT BLOCKS */
+  .stat { text-align: center; }
+  .stat__value { font-size: clamp(32px, 5vw, 56px); font-weight: 800; letter-spacing: -2px; color: var(--accent); }
+  .stat__label { font-family: var(--font-mono); font-size: clamp(10px, 1.1vw, 13px); color: var(--text-dim); text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; }
+
+  /* FLOW */
+  .flow { display: flex; align-items: center; gap: clamp(8px, 1.5vw, 20px); flex-wrap: wrap; }
+  .flow__step { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 20px; font-size: clamp(13px, 1.5vw, 16px); color: var(--text-dim); }
+  .flow__arrow { color: var(--accent); font-size: 20px; flex-shrink: 0; }
+
+  /* PHASE BAR */
+  .phase-bar { display: flex; gap: 3px; width: 100%; margin: 16px 0; }
+  .phase-bar__seg { height: 6px; border-radius: 3px; flex: 1; }
+
+  /* QUOTE */
+  .slide__quote { font-size: clamp(20px, 3.5vw, 36px); font-weight: 300; font-style: italic; line-height: 1.4; color: var(--text); border-left: 3px solid var(--accent); padding-left: clamp(16px, 3vw, 32px); }
+
+  /* GLOW */
+  .glow-tl { background-image: radial-gradient(ellipse at 10% 20%, rgba(16,185,129,0.06) 0%, transparent 50%); }
+  .glow-br { background-image: radial-gradient(ellipse at 90% 80%, rgba(16,185,129,0.06) 0%, transparent 50%); }
+  .glow-center { background-image: radial-gradient(ellipse at 50% 50%, rgba(16,185,129,0.04) 0%, transparent 60%); }
+  .glow-amber { background-image: radial-gradient(ellipse at 70% 30%, rgba(245,158,11,0.05) 0%, transparent 50%); }
+
+  /* DECORATIVE */
+  .corner-marks { position: absolute; inset: 24px; pointer-events: none; z-index: 0; }
+  .corner-marks::before, .corner-marks::after {
+    content: ''; position: absolute; width: 24px; height: 24px;
+    border-color: var(--accent); border-style: solid; opacity: 0.15;
+  }
+  .corner-marks::before { top: 0; left: 0; border-width: 1px 0 0 1px; }
+  .corner-marks::after { bottom: 0; right: 0; border-width: 0 1px 1px 0; }
+
+  .tag { font-family: var(--font-mono); font-size: 11px; font-weight: 600; background: var(--accent-dim); color: var(--accent); padding: 4px 12px; border-radius: 99px; display: inline-block; }
+  .tag--amber { background: var(--accent2-dim); color: var(--accent2); }
+
+  .spacer { height: clamp(12px, 2vh, 24px); }
+  .spacer-sm { height: clamp(8px, 1.2vh, 16px); }
+
+  .flex-center { display: flex; align-items: center; justify-content: center; }
+  .gap-sm { gap: clamp(8px, 1vw, 16px); }
+  .gap-md { gap: clamp(16px, 2vw, 28px); }
+
+  .text-green { color: var(--green); }
+  .text-red { color: var(--red); }
+  .text-amber { color: var(--accent2); }
+  .text-accent { color: var(--accent); }
+  .text-purple { color: var(--purple); }
+
+  .w-full { width: 100%; }
+  .mb-sm { margin-bottom: 8px; }
+  .mb-md { margin-bottom: 16px; }
+  .mb-lg { margin-bottom: 28px; }
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+<!-- ==================== SLIDE 1: TITLE ==================== -->
+<section class="slide slide--title">
+  <div class="corner-marks"></div>
+  <p class="slide__label reveal">Crypto Trading Bot</p>
+  <h1 class="slide__display reveal" style="margin: 20px 0;">Автоматическая<br>торговля<br>криптовалютой</h1>
+  <p class="slide__subtitle reveal" style="margin-top: 16px;">6 стратегий &middot; Telegram UI &middot; Бэктестинг &middot; Docker</p>
+  <div class="spacer"></div>
+  <p class="slide__body reveal" style="max-width: 500px; text-align: center; margin: 0 auto;">Полнофункциональный бот для автоматической торговли<br>на Binance и Bybit с Paper Trading и Live Trading</p>
+</section>
+
+<!-- ==================== SLIDE 2: PROBLEM ==================== -->
+<section class="slide glow-tl">
+  <div class="corner-marks"></div>
+  <p class="slide__label reveal">Проблема</p>
+  <h2 class="slide__heading reveal mb-lg">Почему автоматизация торговли</h2>
+  <div class="grid-3 reveal">
+    <div class="card">
+      <div class="card__badge badge--red">Эмоции</div>
+      <div class="card__title">Страх и жадность</div>
+      <div class="card__text">90% трейдеров теряют деньги из-за эмоциональных решений. Бот торгует строго по стратегии.</div>
+    </div>
+    <div class="card">
+      <div class="card__badge badge--amber">Время</div>
+      <div class="card__title">Круглосуточный рынок</div>
+      <div class="card__text">Крипторынок работает 24/7. Человек не может следить за графиками без перерыва. Бот может.</div>
+    </div>
+    <div class="card">
+      <div class="card__badge badge--blue">Скорость</div>
+      <div class="card__title">Мгновенная реакция</div>
+      <div class="card__text">Бот анализирует данные и открывает сделку за секунды. Человек может упустить момент.</div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <p class="slide__body reveal" style="max-width: 700px;">Цель проекта: убрать человеческий фактор из торговли, обеспечить дисциплинированное следование стратегии и круглосуточный мониторинг рынка.</p>
+</section>
+
+<!-- ==================== SLIDE 3: MVP ==================== -->
+<section class="slide glow-br">
+  <p class="slide__label reveal">Текущий MVP</p>
+  <h2 class="slide__heading reveal mb-lg">Что реализовано</h2>
+  <div class="grid-2 reveal">
+    <div>
+      <div class="card mb-sm">
+        <div class="card__badge badge--green">Готово</div>
+        <div class="card__title">Торговый движок</div>
+        <div class="card__text">Async Python, Paper/Live Trading, Binance + Bybit через CCXT, автоматическое исполнение ордеров</div>
+      </div>
+      <div class="card mb-sm">
+        <div class="card__badge badge--green">Готово</div>
+        <div class="card__title">6 торговых стратегий</div>
+        <div class="card__text">От консервативных (Grid, DCA) до агрессивных (Supertrend). Стратегия по умолчанию: Multi Indicator</div>
+      </div>
+      <div class="card">
+        <div class="card__badge badge--green">Готово</div>
+        <div class="card__title">Risk Management</div>
+        <div class="card__text">3 пресета риска, SL/TP, макс. просадка 15%, дневной лимит убытков 5%, trailing stop</div>
+      </div>
+    </div>
+    <div>
+      <div class="card mb-sm">
+        <div class="card__badge badge--green">Готово</div>
+        <div class="card__title">Telegram-интерфейс</div>
+        <div class="card__text">Полное управление ботом из Telegram: статус, баланс, смена стратегии, бэктест, сравнение</div>
+      </div>
+      <div class="card mb-sm">
+        <div class="card__badge badge--green">Готово</div>
+        <div class="card__title">Бэктестинг + Excel</div>
+        <div class="card__text">Тест на исторических данных, визуализация, сравнение стратегий, подробные xlsx-отчёты по сделкам</div>
+      </div>
+      <div class="card">
+        <div class="card__badge badge--green">Готово</div>
+        <div class="card__title">Docker-развёртывание</div>
+        <div class="card__text">Dockerfile + docker-compose. Запуск одной командой: docker compose up -d</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 4: STRATEGIES ==================== -->
+<section class="slide glow-center">
+  <p class="slide__label reveal">Стратегии</p>
+  <h2 class="slide__heading reveal mb-lg">6 торговых стратегий</h2>
+  <div class="grid-3 reveal">
+    <div class="card">
+      <div class="card__badge badge--amber">Умеренный</div>
+      <div class="card__title">EMA Crossover</div>
+      <div class="card__text">Трендовая. Пересечение EMA 9/21 с фильтром EMA 200. Таймфрейм 1h.</div>
+    </div>
+    <div class="card">
+      <div class="card__badge badge--green">Консервативный</div>
+      <div class="card__title">RSI Mean Reversion</div>
+      <div class="card__text">Контртренд. RSI + Bollinger Bands + Stochastic RSI. Для бокового рынка. 1h.</div>
+    </div>
+    <div class="card">
+      <div class="card__badge badge--green">Консервативный</div>
+      <div class="card__title">Grid Trading</div>
+      <div class="card__text">Сетка ордеров. Зарабатывает на волатильности в диапазоне. ATR + ADX фильтр. 15m.</div>
+    </div>
+    <div class="card">
+      <div class="card__badge badge--green">Консервативный</div>
+      <div class="card__title">Smart DCA</div>
+      <div class="card__text">Умное усреднение. 5 уровней докупки с подтверждением RSI, EMA, MACD. x1.5 на уровень. 4h.</div>
+    </div>
+    <div class="card">
+      <div class="card__badge badge--red">Агрессивный</div>
+      <div class="card__title">Supertrend</div>
+      <div class="card__text">Supertrend + ADX. Следует за трендом. Лучше на фьючерсах с плечом. 1h.</div>
+    </div>
+    <div class="card">
+      <div class="card__badge badge--amber">Умеренный</div>
+      <div class="card__title">Multi Indicator</div>
+      <div class="card__text">Консенсус 6 индикаторов. Сделка при 4+ совпадениях. Универсальная. По умолчанию. 1h.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 5: RISK MANAGEMENT ==================== -->
+<section class="slide glow-amber">
+  <p class="slide__label reveal">Risk Management</p>
+  <h2 class="slide__heading reveal mb-lg">Управление рисками</h2>
+  <div class="grid-2-1 reveal">
+    <div>
+      <table class="slide-table">
+        <thead>
+          <tr><th>Параметр</th><th>Conservative</th><th>Moderate</th><th>Aggressive</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="highlight">Риск на сделку</td><td>1%</td><td>2%</td><td>4%</td></tr>
+          <tr><td class="highlight">Макс. плечо</td><td>3x</td><td>5x</td><td>10x</td></tr>
+          <tr><td class="highlight">Макс. позиций</td><td>2</td><td>3</td><td>5</td></tr>
+          <tr><td class="highlight">Stop Loss</td><td>1.5%</td><td>2%</td><td>3%</td></tr>
+          <tr><td class="highlight">Take Profit</td><td>3%</td><td>4%</td><td>6%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="card" style="border-color: var(--border-bright);">
+        <div class="card__title text-accent">Защита капитала</div>
+        <div class="spacer-sm"></div>
+        <div class="card__text">Дневной лимит: <strong class="text-red">5%</strong></div>
+        <div class="card__text">Макс. просадка: <strong class="text-red">15%</strong></div>
+        <div class="card__text">3 убытка подряд: <strong class="text-amber">-50%</strong> размер</div>
+        <div class="card__text">5 убытков подряд: <strong class="text-amber">-75%</strong> размер</div>
+        <div class="card__text">Trailing Stop: <strong>1.5%</strong></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 6: TELEGRAM ==================== -->
+<section class="slide glow-tl">
+  <p class="slide__label reveal">Telegram</p>
+  <h2 class="slide__heading reveal mb-lg">Управление через Telegram</h2>
+  <div class="grid-2 reveal">
+    <div>
+      <div class="card mb-sm">
+        <div class="card__title">Мониторинг</div>
+        <div class="card__text">/status -- статус бота, /balance -- баланс и PnL, /trades -- открытые позиции, /history -- история сделок</div>
+      </div>
+      <div class="card mb-sm">
+        <div class="card__title">Настройки</div>
+        <div class="card__text">/strategy -- выбор стратегии, /risk -- уровень риска, /mode -- Paper/Live, Spot/Futures, /symbol -- торговые пары</div>
+      </div>
+      <div class="card">
+        <div class="card__title">Аналитика</div>
+        <div class="card__text">/backtest -- тест стратегии, /compare -- сравнение всех стратегий, /stats -- статистика, /info -- описание стратегий</div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 16px; align-items: center; justify-content: center;">
+      <div style="background: var(--surface); border: 1px solid var(--border-bright); border-radius: 16px; padding: 24px; max-width: 320px; width: 100%;">
+        <div style="font-family: var(--font-mono); font-size: 13px; color: var(--accent); margin-bottom: 12px;">Crypto Trading Bot</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div style="background: var(--surface2); border-radius: 8px; padding: 8px 12px; font-size: 13px; text-align: center;">Статус</div>
+          <div style="background: var(--surface2); border-radius: 8px; padding: 8px 12px; font-size: 13px; text-align: center;">Баланс</div>
+          <div style="background: var(--surface2); border-radius: 8px; padding: 8px 12px; font-size: 13px; text-align: center;">Запустить</div>
+          <div style="background: var(--surface2); border-radius: 8px; padding: 8px 12px; font-size: 13px; text-align: center;">Остановить</div>
+          <div style="background: var(--surface2); border-radius: 8px; padding: 8px 12px; font-size: 13px; text-align: center;">Стратегии</div>
+          <div style="background: var(--surface2); border-radius: 8px; padding: 8px 12px; font-size: 13px; text-align: center;">Настройки</div>
+          <div style="background: var(--green-dim); border: 1px solid rgba(16,185,129,0.2); border-radius: 8px; padding: 8px 12px; font-size: 13px; text-align: center; color: var(--green); grid-column: 1 / -1;">Бэктест</div>
+        </div>
+      </div>
+      <p style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">Интерактивное inline-меню</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 7: BACKTESTING ==================== -->
+<section class="slide glow-br">
+  <p class="slide__label reveal">Аналитика</p>
+  <h2 class="slide__heading reveal mb-lg">Бэктестинг и отчёты</h2>
+  <div class="grid-2 reveal">
+    <div>
+      <div class="card mb-sm">
+        <div class="card__title">Бэктест на исторических данных</div>
+        <div class="card__text">Загрузка реальных данных с Binance. Пагинация для длинных периодов. Поддержка любых дат и пар.</div>
+      </div>
+      <div class="card mb-sm">
+        <div class="card__title">Сравнение стратегий</div>
+        <div class="card__text">Все 6 стратегий на одних данных. Equity curve, drawdown, win rate, profit factor. Графики matplotlib.</div>
+      </div>
+      <div class="card">
+        <div class="card__title">Excel-отчёты (.xlsx)</div>
+        <div class="card__text">Детали каждой сделки: время входа/выхода, длительность, SL/TP, плечо, объём, PnL. Цветовая разметка: зелёный = прибыль, красный = убыток.</div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 12px;">
+      <div class="stat">
+        <div class="stat__value">6</div>
+        <div class="stat__label">Стратегий для сравнения</div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+        <div class="card" style="text-align: center; padding: 16px;">
+          <div style="font-size: 24px; font-weight: 800; color: var(--green);">+3.8%</div>
+          <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 4px;">RSI MEAN REVERSION</div>
+        </div>
+        <div class="card" style="text-align: center; padding: 16px;">
+          <div style="font-size: 24px; font-weight: 800; color: var(--green);">+3.4%</div>
+          <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 4px;">EMA CROSSOVER</div>
+        </div>
+        <div class="card" style="text-align: center; padding: 16px;">
+          <div style="font-size: 24px; font-weight: 800; color: var(--red);">-3.3%</div>
+          <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 4px;">GRID</div>
+        </div>
+        <div class="card" style="text-align: center; padding: 16px;">
+          <div style="font-size: 24px; font-weight: 800; color: var(--red);">-6.0%</div>
+          <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 4px;">SMART DCA</div>
+        </div>
+      </div>
+      <p style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); text-align: center;">BTC/USDT | последние 6 недель | Paper $100</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 8: RESEARCH ==================== -->
+<section class="slide glow-center">
+  <p class="slide__label reveal">Исследование</p>
+  <h2 class="slide__heading reveal mb-lg">Анализ рынка крипто-ботов</h2>
+  <div class="grid-2 reveal">
+    <div>
+      <table class="slide-table">
+        <thead><tr><th>Проект</th><th>Stars</th><th>Фокус</th></tr></thead>
+        <tbody>
+          <tr><td class="highlight">Freqtrade</td><td class="text-accent">48k</td><td>ML + Hyperopt + сообщество</td></tr>
+          <tr><td class="highlight">Hummingbot</td><td class="text-accent">18k</td><td>Market making, 140+ бирж</td></tr>
+          <tr><td class="highlight">FinRL</td><td class="text-accent">12k</td><td>Deep Reinforcement Learning</td></tr>
+          <tr><td class="highlight">NautilusTrader</td><td class="text-accent">9k</td><td>Rust + Python, скорость</td></tr>
+          <tr><td class="highlight">Jesse</td><td class="text-accent">7.6k</td><td>Чистый API, multi-TF</td></tr>
+          <tr><td class="highlight">OctoBot</td><td class="text-accent">5.5k</td><td>AI (ChatGPT), модульность</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <div class="card mb-sm">
+        <div class="card__title">Ключевые выводы</div>
+        <div class="card__text">
+          Grid Trading: <strong class="text-green">3-14% в месяц</strong> в боковике<br><br>
+          Бэктест завышен на <strong class="text-amber">20-40%</strong> без slippage<br><br>
+          Multi-timeframe даёт <strong class="text-green">наибольший буст</strong> к win rate<br><br>
+          Hyperopt (Optuna) может превратить убыточную стратегию в прибыльную
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 9: ALPHA ARENA ==================== -->
+<section class="slide glow-amber">
+  <p class="slide__label reveal">AI-трейдинг</p>
+  <h2 class="slide__heading reveal mb-md">Alpha Arena: нейросети торгуют криптой</h2>
+  <p class="slide__body reveal mb-lg">Проект <strong class="text-accent">nof1.ai</strong> дал 6 LLM-моделям по $10,000 реальных денег для торговли на Hyperliquid. Полная автономия, все сделки публичны.</p>
+  <div class="reveal">
+    <table class="slide-table">
+      <thead><tr><th>Модель</th><th>Результат</th><th>Стратегия</th></tr></thead>
+      <tbody>
+        <tr><td class="highlight">Qwen 3 Max</td><td class="text-green" style="font-weight:700;">+22.3%</td><td>Умеренное плечо, диверсификация</td></tr>
+        <tr><td class="highlight">DeepSeek V3.1</td><td class="text-green" style="font-weight:700;">+4-5%</td><td>15x лонг SOL, потом просадка</td></tr>
+        <tr><td class="highlight">Claude Sonnet 4.5</td><td class="text-red" style="font-weight:700;">-15.7%</td><td>20x ETH -- ликвидация на новостях</td></tr>
+        <tr><td class="highlight">Gemini 2.5 Pro</td><td class="text-red" style="font-weight:700;">-55.9%</td><td>Перегруз XRP</td></tr>
+        <tr><td class="highlight">GPT-5</td><td class="text-red" style="font-weight:700;">-64.8%</td><td>Переторговка, 2 маржин-колла</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="spacer-sm"></div>
+  <p class="slide__body reveal"><strong class="text-accent">Вывод:</strong> risk management важнее интеллекта модели. GPT-5 -- самая "умная" -- потеряла 65%.</p>
+</section>
+
+<!-- ==================== SLIDE 10: LLM STRATEGY ==================== -->
+<section class="slide glow-tl">
+  <p class="slide__label reveal">Будущее</p>
+  <h2 class="slide__heading reveal mb-lg">LLM как 7-я стратегия</h2>
+  <div class="grid-2 reveal">
+    <div>
+      <div class="flow" style="flex-direction: column; align-items: stretch; gap: 10px;">
+        <div class="flow__step" style="border-color: var(--border-bright);">
+          <span class="text-accent" style="font-weight: 700;">1.</span> Сбор данных -- свечи, цена, баланс, позиции
+        </div>
+        <div style="text-align: center; color: var(--accent); font-size: 16px;">&#8595;</div>
+        <div class="flow__step" style="border-color: var(--border-bright);">
+          <span class="text-accent" style="font-weight: 700;">2.</span> Один API-запрос к нейросети (~2500 токенов)
+        </div>
+        <div style="text-align: center; color: var(--accent); font-size: 16px;">&#8595;</div>
+        <div class="flow__step" style="border-color: var(--border-bright);">
+          <span class="text-accent" style="font-weight: 700;">3.</span> Ответ: JSON {action, size, SL/TP, reasoning}
+        </div>
+        <div style="text-align: center; color: var(--accent); font-size: 16px;">&#8595;</div>
+        <div class="flow__step" style="border-color: var(--border-bright);">
+          <span class="text-accent" style="font-weight: 700;">4.</span> Проверка через RiskManager &rarr; исполнение
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="card mb-sm" style="border-color: var(--border-bright);">
+        <div class="card__title text-accent">Стоимость API в месяц</div>
+        <div class="spacer-sm"></div>
+        <table class="slide-table" style="font-size: 14px;">
+          <thead><tr><th>Модель</th><th>4h</th><th>1h</th></tr></thead>
+          <tbody>
+            <tr><td class="highlight">DeepSeek</td><td class="text-green">$0.14</td><td class="text-green">$0.58</td></tr>
+            <tr><td class="highlight">GPT-5.4 mini</td><td>$0.68</td><td>$2.74</td></tr>
+            <tr><td class="highlight">Claude Sonnet</td><td>$2.43</td><td>$9.72</td></tr>
+            <tr><td class="highlight">Claude Opus</td><td>$4.05</td><td>$16.20</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">Prompt caching снижает стоимость ещё в 1.5-3x</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 11: CLASSIC VS LLM ==================== -->
+<section class="slide glow-center">
+  <p class="slide__label reveal">Сравнение</p>
+  <h2 class="slide__heading reveal mb-lg">Классика vs AI: какой подход выбрать</h2>
+  <div class="grid-2 reveal">
+    <div class="card" style="border-color: rgba(16,185,129,0.2);">
+      <div class="card__badge badge--green">Классические стратегии</div>
+      <div class="spacer-sm"></div>
+      <div class="card__text">
+        <strong class="text-accent">+</strong> Детерминированные и предсказуемые<br>
+        <strong class="text-accent">+</strong> Можно бэктестить на годах данных<br>
+        <strong class="text-accent">+</strong> Нет зависимости от внешних API<br>
+        <strong class="text-accent">+</strong> Бесплатно<br>
+        <strong class="text-accent">+</strong> Grid: 3-14% в месяц (боковик)<br><br>
+        <strong class="text-red">&minus;</strong> Не учитывают новости/контекст<br>
+        <strong class="text-red">&minus;</strong> Фиксированные пороги
+      </div>
+    </div>
+    <div class="card" style="border-color: rgba(245,158,11,0.2);">
+      <div class="card__badge badge--amber">LLM-стратегии</div>
+      <div class="spacer-sm"></div>
+      <div class="card__text">
+        <strong class="text-accent">+</strong> Адаптивны к контексту и новостям<br>
+        <strong class="text-accent">+</strong> Не нужны захардкоженные пороги<br>
+        <strong class="text-accent">+</strong> Qwen: +22% за 2 недели (Alpha Arena)<br>
+        <strong class="text-accent">+</strong> Дешево: от $0.14/мес<br><br>
+        <strong class="text-red">&minus;</strong> Невозможно бэктестить<br>
+        <strong class="text-red">&minus;</strong> Зависимость от API провайдера<br>
+        <strong class="text-red">&minus;</strong> Недетерминированные
+      </div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="slide__quote reveal" style="max-width: 800px;">Рекомендация: комбинированный подход. Классика как стабильная основа, LLM как 7-я стратегия для сравнения в Paper Trading.</div>
+</section>
+
+<!-- ==================== SLIDE 12: ROADMAP ==================== -->
+<section class="slide glow-br">
+  <p class="slide__label reveal">Roadmap</p>
+  <h2 class="slide__heading reveal mb-md">План развития</h2>
+  <div class="phase-bar reveal">
+    <div class="phase-bar__seg" style="background: var(--green); flex: 2;"></div>
+    <div class="phase-bar__seg" style="background: var(--accent2); flex: 2;"></div>
+    <div class="phase-bar__seg" style="background: var(--blue); flex: 3;"></div>
+    <div class="phase-bar__seg" style="background: var(--purple); flex: 4;"></div>
+    <div class="phase-bar__seg" style="background: var(--text-dim); flex: 3;"></div>
+  </div>
+  <div class="spacer-sm"></div>
+  <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;" class="reveal">
+    <div class="card" style="padding: 14px;">
+      <div style="font-family: var(--font-mono); font-size: 10px; color: var(--green); margin-bottom: 6px;">ФАЗА 1 &middot; 1-2 НЕД</div>
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">Улучшение стратегий</div>
+      <div style="font-size: 12px; color: var(--text-dim); line-height: 1.5;">ATR trailing stop<br>Slippage в бэктесте<br>Geometric grid<br>Multi-timeframe</div>
+    </div>
+    <div class="card" style="padding: 14px;">
+      <div style="font-family: var(--font-mono); font-size: 10px; color: var(--accent2); margin-bottom: 6px;">ФАЗА 2 &middot; 1-2 НЕД</div>
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">LLM-стратегия</div>
+      <div style="font-size: 12px; color: var(--text-dim); line-height: 1.5;">Claude / GPT / DeepSeek<br>Промпт-инжиниринг<br>Paper Trading тест</div>
+    </div>
+    <div class="card" style="padding: 14px;">
+      <div style="font-family: var(--font-mono); font-size: 10px; color: var(--blue); margin-bottom: 6px;">ФАЗА 3 &middot; 2-4 НЕД</div>
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">Оптимизация</div>
+      <div style="font-size: 12px; color: var(--text-dim); line-height: 1.5;">Hyperopt (Optuna)<br>Walk-forward testing<br>WebSocket</div>
+    </div>
+    <div class="card" style="padding: 14px;">
+      <div style="font-family: var(--font-mono); font-size: 10px; color: var(--purple); margin-bottom: 6px;">ФАЗА 4 &middot; 1-2 МЕС</div>
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">Продвинутые стратегии</div>
+      <div style="font-size: 12px; color: var(--text-dim); line-height: 1.5;">Market Making<br>Арбитраж<br>Sentiment Analysis</div>
+    </div>
+    <div class="card" style="padding: 14px;">
+      <div style="font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-bottom: 6px;">ФАЗА 5 &middot; ONGOING</div>
+      <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">Продакшен</div>
+      <div style="font-size: 12px; color: var(--text-dim); line-height: 1.5;">Testnet торговля<br>Live с мин. капиталом<br>Мониторинг + алерты</div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 13: TECH STACK ==================== -->
+<section class="slide glow-tl">
+  <p class="slide__label reveal">Технологии</p>
+  <h2 class="slide__heading reveal mb-lg">Технический стек</h2>
+  <div class="grid-3 reveal">
+    <div class="card" style="text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 8px;">&#x1f40d;</div>
+      <div class="card__title">Python 3.12</div>
+      <div class="card__text">Async/await, asyncio<br>Основной язык проекта</div>
+    </div>
+    <div class="card" style="text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 8px;">&#x1f4b1;</div>
+      <div class="card__title">CCXT</div>
+      <div class="card__text">Binance, Bybit<br>100+ бирж через единый API</div>
+    </div>
+    <div class="card" style="text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 8px;">&#x1f4f1;</div>
+      <div class="card__title">Telegram Bot API</div>
+      <div class="card__text">python-telegram-bot<br>Inline keyboards, callbacks</div>
+    </div>
+    <div class="card" style="text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 8px;">&#x1f4ca;</div>
+      <div class="card__title">Pandas + TA</div>
+      <div class="card__text">Технический анализ<br>300+ индикаторов</div>
+    </div>
+    <div class="card" style="text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 8px;">&#x1f4be;</div>
+      <div class="card__title">SQLite + aiosqlite</div>
+      <div class="card__text">Async база данных<br>Сделки, баланс, сигналы</div>
+    </div>
+    <div class="card" style="text-align: center;">
+      <div style="font-size: 32px; margin-bottom: 8px;">&#x1f433;</div>
+      <div class="card__title">Docker</div>
+      <div class="card__text">Dockerfile + compose<br>Запуск одной командой</div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="flow reveal" style="justify-content: center;">
+    <span class="tag">matplotlib</span>
+    <span class="tag">openpyxl</span>
+    <span class="tag">Pydantic</span>
+    <span class="tag">NumPy</span>
+    <span class="tag">APScheduler</span>
+    <span class="tag">aiohttp</span>
+  </div>
+</section>
+
+<!-- ==================== SLIDE 14: SUMMARY ==================== -->
+<section class="slide slide--title" style="background-image: radial-gradient(ellipse at 50% 40%, rgba(16,185,129,0.08) 0%, transparent 60%);">
+  <div class="corner-marks"></div>
+  <p class="slide__label reveal">Итоги</p>
+  <h2 class="slide__heading reveal" style="max-width: 800px; margin: 20px auto;">Готовый MVP с чётким планом развития</h2>
+  <div class="spacer"></div>
+  <div style="display: flex; gap: clamp(24px, 4vw, 48px); justify-content: center; flex-wrap: wrap;" class="reveal">
+    <div class="stat">
+      <div class="stat__value">6</div>
+      <div class="stat__label">Стратегий</div>
+    </div>
+    <div class="stat">
+      <div class="stat__value">~4k</div>
+      <div class="stat__label">Строк кода</div>
+    </div>
+    <div class="stat">
+      <div class="stat__value">2</div>
+      <div class="stat__label">Биржи</div>
+    </div>
+    <div class="stat">
+      <div class="stat__value">5</div>
+      <div class="stat__label">Фаз развития</div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="reveal" style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+    <span class="tag">Бэктестинг</span>
+    <span class="tag">Excel-отчёты</span>
+    <span class="tag">Telegram UI</span>
+    <span class="tag">Docker</span>
+    <span class="tag">Paper Trading</span>
+    <span class="tag tag--amber">LLM-стратегия (план)</span>
+    <span class="tag tag--amber">Hyperopt (план)</span>
+  </div>
+  <div class="spacer"></div>
+  <p class="slide__subtitle reveal" style="opacity: 0.5;">github.com/nkonshin/Cypto-trading-bot</p>
+</section>
+
+</div><!-- /deck -->
+
+<!-- NAV CHROME -->
+<div class="deck-progress" id="progress"></div>
+<nav class="deck-dots" id="dots"></nav>
+<div class="deck-counter" id="counter"></div>
+<div class="deck-hints" id="hints">&#8593;&#8595; / Space / Click to navigate</div>
+
+<script>
+(function(){
+  const deck = document.getElementById('deck');
+  const slides = Array.from(deck.querySelectorAll('.slide'));
+  const progress = document.getElementById('progress');
+  const dotsNav = document.getElementById('dots');
+  const counter = document.getElementById('counter');
+  const hints = document.getElementById('hints');
+  const total = slides.length;
+  let current = 0;
+
+  // Create dots
+  slides.forEach((_, i) => {
+    const dot = document.createElement('button');
+    dot.className = 'deck-dot';
+    dot.addEventListener('click', () => goTo(i));
+    dotsNav.appendChild(dot);
+  });
+  const dots = Array.from(dotsNav.querySelectorAll('.deck-dot'));
+
+  function update() {
+    slides.forEach((s, i) => s.classList.toggle('visible', i === current));
+    dots.forEach((d, i) => d.classList.toggle('active', i === current));
+    progress.style.width = ((current + 1) / total * 100) + '%';
+    counter.textContent = (current + 1) + ' / ' + total;
+    if (current > 0) hints.classList.add('faded');
+  }
+
+  function goTo(i) {
+    current = Math.max(0, Math.min(total - 1, i));
+    slides[current].scrollIntoView({ behavior: 'smooth' });
+    update();
+  }
+
+  // Scroll snap observer
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting && e.intersectionRatio > 0.5) {
+        current = slides.indexOf(e.target);
+        update();
+      }
+    });
+  }, { root: deck, threshold: 0.5 });
+  slides.forEach(s => observer.observe(s));
+
+  // Keyboard
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); goTo(current + 1); }
+    if (e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); goTo(current - 1); }
+    if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+    if (e.key === 'End') { e.preventDefault(); goTo(total - 1); }
+  });
+
+  update();
+})();
+</script>
+</body>
+</html>
