@@ -72,10 +72,30 @@ class MultiIndicatorStrategy(BaseStrategy):
 
         # 6. ATR
         df["atr"] = ta.volatility.average_true_range(df["high"], df["low"], df["close"], window=14)
-        df["atr_pct"] = df["atr"] / df["close"] * 100
+        df["atr_pct"] = df.apply(
+            lambda r: r["atr"] / r["close"] * 100 if r["close"] != 0 else 0, axis=1
+        )
 
         last = df.iloc[-1]
         prev = df.iloc[-2]
+
+        # Безопасное извлечение значений
+        close = self.safe_val(last["close"], 1.0)
+        ema9 = self.safe_val(last["ema9"])
+        ema21 = self.safe_val(last["ema21"])
+        ema50 = self.safe_val(last["ema50"])
+        rsi = self.safe_val(last["rsi"], 50)
+        prev_rsi = self.safe_val(prev["rsi"], 50)
+        macd_val = self.safe_val(last["macd"])
+        macd_sig = self.safe_val(last["macd_signal"])
+        macd_hist = self.safe_val(last["macd_hist"])
+        prev_macd_hist = self.safe_val(prev["macd_hist"])
+        bb_upper = self.safe_val(last["bb_upper"], close)
+        bb_lower = self.safe_val(last["bb_lower"], close)
+        bb_pct = self.safe_val(last["bb_pct"], 0.5)
+        obv = self.safe_val(last["obv"])
+        obv_ema = self.safe_val(last["obv_ema"])
+        atr_pct = self.safe_val(last["atr_pct"], 2.0)
 
         # === Голосование ===
         bull_votes = 0
@@ -84,74 +104,75 @@ class MultiIndicatorStrategy(BaseStrategy):
         reasons_bear = []
 
         # 1. EMA тренд
-        if last["ema9"] > last["ema21"] > last["ema50"]:
-            bull_votes += 1
-            reasons_bull.append("EMA выстроены бычьи")
-        elif last["ema9"] < last["ema21"] < last["ema50"]:
-            bear_votes += 1
-            reasons_bear.append("EMA выстроены медвежьи")
+        if ema9 > 0 and ema21 > 0 and ema50 > 0:
+            if ema9 > ema21 > ema50:
+                bull_votes += 1
+                reasons_bull.append("EMA выстроены бычьи")
+            elif ema9 < ema21 < ema50:
+                bear_votes += 1
+                reasons_bear.append("EMA выстроены медвежьи")
 
         # 2. RSI
-        if 30 < last["rsi"] < 50 and last["rsi"] > prev["rsi"]:
+        if 30 < rsi < 50 and rsi > prev_rsi:
             bull_votes += 1
-            reasons_bull.append(f"RSI={last['rsi']:.0f} растёт")
-        elif 50 < last["rsi"] < 70 and last["rsi"] < prev["rsi"]:
+            reasons_bull.append(f"RSI={rsi:.0f} растёт")
+        elif 50 < rsi < 70 and rsi < prev_rsi:
             bear_votes += 1
-            reasons_bear.append(f"RSI={last['rsi']:.0f} падает")
-        elif last["rsi"] < 30:
+            reasons_bear.append(f"RSI={rsi:.0f} падает")
+        elif rsi < 30:
             bull_votes += 1
-            reasons_bull.append(f"RSI={last['rsi']:.0f} перепродан")
-        elif last["rsi"] > 70:
+            reasons_bull.append(f"RSI={rsi:.0f} перепродан")
+        elif rsi > 70:
             bear_votes += 1
-            reasons_bear.append(f"RSI={last['rsi']:.0f} перекуплен")
+            reasons_bear.append(f"RSI={rsi:.0f} перекуплен")
 
         # 3. MACD
-        if last["macd"] > last["macd_signal"] and last["macd_hist"] > 0:
+        if macd_val > macd_sig and macd_hist > 0:
             bull_votes += 1
             reasons_bull.append("MACD бычий")
-        elif last["macd"] < last["macd_signal"] and last["macd_hist"] < 0:
+        elif macd_val < macd_sig and macd_hist < 0:
             bear_votes += 1
             reasons_bear.append("MACD медвежий")
 
         # MACD histogram разворот
-        if prev["macd_hist"] < 0 and last["macd_hist"] > prev["macd_hist"]:
+        if prev_macd_hist < 0 and macd_hist > prev_macd_hist:
             bull_votes += 0.5
             reasons_bull.append("MACD hist разворот вверх")
-        elif prev["macd_hist"] > 0 and last["macd_hist"] < prev["macd_hist"]:
+        elif prev_macd_hist > 0 and macd_hist < prev_macd_hist:
             bear_votes += 0.5
             reasons_bear.append("MACD hist разворот вниз")
 
         # 4. Bollinger Bands
-        if last["close"] < last["bb_lower"]:
+        if close < bb_lower:
             bull_votes += 1
             reasons_bull.append("Цена ниже нижней BB")
-        elif last["close"] > last["bb_upper"]:
+        elif close > bb_upper:
             bear_votes += 1
             reasons_bear.append("Цена выше верхней BB")
-        elif last["bb_pct"] < 0.2:
+        elif bb_pct < 0.2:
             bull_votes += 0.5
             reasons_bull.append("Цена в нижней части BB")
-        elif last["bb_pct"] > 0.8:
+        elif bb_pct > 0.8:
             bear_votes += 0.5
             reasons_bear.append("Цена в верхней части BB")
 
         # 5. OBV (объём подтверждает направление)
-        if last["obv"] > last["obv_ema"]:
+        if obv > obv_ema:
             bull_votes += 1
             reasons_bull.append("OBV выше среднего")
-        elif last["obv"] < last["obv_ema"]:
+        elif obv < obv_ema:
             bear_votes += 1
             reasons_bear.append("OBV ниже среднего")
 
         # 6. Волатильность (ATR) — фильтр
-        low_volatility = last["atr_pct"] < 1.0
+        low_volatility = atr_pct < 1.0
 
         indicators = {
-            "price": round(last["close"], 2),
-            "rsi": round(last["rsi"], 1),
-            "macd_hist": round(last["macd_hist"], 4),
-            "bb_pct": round(last["bb_pct"], 2),
-            "atr_pct": round(last["atr_pct"], 2),
+            "price": round(close, 2),
+            "rsi": round(rsi, 1),
+            "macd_hist": round(macd_hist, 4),
+            "bb_pct": round(bb_pct, 2),
+            "atr_pct": round(atr_pct, 2),
             "bull_votes": bull_votes,
             "bear_votes": bear_votes,
         }
@@ -159,7 +180,7 @@ class MultiIndicatorStrategy(BaseStrategy):
         # === Принятие решения ===
 
         # Определяем SL/TP на основе ATR
-        atr_sl = max(1.0, last["atr_pct"] * 1.5)
+        atr_sl = max(1.0, atr_pct * 1.5)
         atr_tp = atr_sl * 2
 
         if bull_votes >= self.min_votes and bull_votes > bear_votes + 1:

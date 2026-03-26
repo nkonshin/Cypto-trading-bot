@@ -41,13 +41,27 @@ class SupertrendStrategy(BaseStrategy):
         supertrend = pd.Series(index=df.index, dtype=float)
         direction = pd.Series(index=df.index, dtype=int)
 
-        supertrend.iloc[0] = upper_band.iloc[0]
-        direction.iloc[0] = -1
+        # Инициализация с первого валидного значения
+        first_valid = upper_band.first_valid_index()
+        start_idx = df.index.get_loc(first_valid) if first_valid is not None else 0
 
-        for i in range(1, len(df)):
-            if df["close"].iloc[i] > upper_band.iloc[i - 1]:
+        supertrend.iloc[start_idx] = upper_band.iloc[start_idx] if not pd.isna(upper_band.iloc[start_idx]) else 0
+        direction.iloc[start_idx] = -1
+
+        for i in range(start_idx + 1, len(df)):
+            ub = upper_band.iloc[i - 1]
+            lb = lower_band.iloc[i - 1]
+            cl = df["close"].iloc[i]
+
+            # Пропускаем NaN
+            if pd.isna(ub) or pd.isna(lb) or pd.isna(cl):
+                direction.iloc[i] = direction.iloc[i - 1] if not pd.isna(direction.iloc[i - 1]) else -1
+                supertrend.iloc[i] = supertrend.iloc[i - 1] if not pd.isna(supertrend.iloc[i - 1]) else 0
+                continue
+
+            if cl > ub:
                 direction.iloc[i] = 1
-            elif df["close"].iloc[i] < lower_band.iloc[i - 1]:
+            elif cl < lb:
                 direction.iloc[i] = -1
             else:
                 direction.iloc[i] = direction.iloc[i - 1]
@@ -84,32 +98,41 @@ class SupertrendStrategy(BaseStrategy):
         last = df.iloc[-1]
         prev = df.iloc[-2]
 
+        close = self.safe_val(last["close"], 1.0)
+        st_val = self.safe_val(last["supertrend"])
+        adx = self.safe_val(last["adx"], 0)
+        di_plus = self.safe_val(last["di_plus"], 0)
+        di_minus = self.safe_val(last["di_minus"], 0)
+        st_dir = int(self.safe_val(last["st_direction"], -1))
+        prev_dir = int(self.safe_val(prev["st_direction"], -1))
+        vol_sma = self.safe_val(last["vol_sma"])
+
         indicators = {
-            "price": round(last["close"], 2),
-            "supertrend": round(last["supertrend"], 2),
-            "direction": int(last["st_direction"]),
-            "adx": round(last["adx"], 1),
-            "di_plus": round(last["di_plus"], 1),
-            "di_minus": round(last["di_minus"], 1),
+            "price": round(close, 2),
+            "supertrend": round(st_val, 2),
+            "direction": st_dir,
+            "adx": round(adx, 1),
+            "di_plus": round(di_plus, 1),
+            "di_minus": round(di_minus, 1),
         }
 
         # Смена направления supertrend
-        direction_changed = prev["st_direction"] != last["st_direction"]
-        strong_trend = last["adx"] > self.adx_threshold
-        volume_spike = last["volume"] > last["vol_sma"] * 1.2
+        direction_changed = prev_dir != st_dir
+        strong_trend = adx > self.adx_threshold
+        volume_spike = vol_sma > 0 and last["volume"] > vol_sma * 1.2
 
         # BUY: supertrend перевернулся вверх + ADX подтверждает тренд
-        if direction_changed and last["st_direction"] == 1:
+        if direction_changed and st_dir == 1:
             strength = 0.5
             if strong_trend:
                 strength += 0.3
             if volume_spike:
                 strength += 0.2
-            if last["di_plus"] > last["di_minus"]:
+            if di_plus > di_minus:
                 strength = min(1.0, strength + 0.1)
 
             # Стоп-лосс — на уровне supertrend
-            sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
+            sl_pct = self.safe_div(abs(close - st_val), close) * 100
             sl_pct = max(1.0, min(sl_pct, 5.0))
 
             return Signal(
@@ -124,16 +147,16 @@ class SupertrendStrategy(BaseStrategy):
             )
 
         # SELL: supertrend перевернулся вниз
-        if direction_changed and last["st_direction"] == -1:
+        if direction_changed and st_dir == -1:
             strength = 0.5
             if strong_trend:
                 strength += 0.3
             if volume_spike:
                 strength += 0.2
-            if last["di_minus"] > last["di_plus"]:
+            if di_minus > di_plus:
                 strength = min(1.0, strength + 0.1)
 
-            sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
+            sl_pct = self.safe_div(abs(close - st_val), close) * 100
             sl_pct = max(1.0, min(sl_pct, 5.0))
 
             return Signal(
@@ -148,7 +171,7 @@ class SupertrendStrategy(BaseStrategy):
             )
 
         # Закрытие позиции при ослаблении тренда
-        if last["st_direction"] == 1 and last["adx"] < 15 and prev["adx"] >= 15:
+        if st_dir == 1 and adx < 15 and self.safe_val(prev["adx"], 0) >= 15:
             return Signal(
                 type=SignalType.CLOSE_LONG, strength=0.4, price=last["close"],
                 symbol=symbol, strategy=self.name,
@@ -156,7 +179,7 @@ class SupertrendStrategy(BaseStrategy):
                 indicators=indicators,
             )
 
-        if last["st_direction"] == -1 and last["adx"] < 15 and prev["adx"] >= 15:
+        if st_dir == -1 and adx < 15 and self.safe_val(prev["adx"], 0) >= 15:
             return Signal(
                 type=SignalType.CLOSE_SHORT, strength=0.4, price=last["close"],
                 symbol=symbol, strategy=self.name,
@@ -165,5 +188,5 @@ class SupertrendStrategy(BaseStrategy):
             )
 
         return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
-                      reason=f"ST={'UP' if last['st_direction']==1 else 'DOWN'}, ADX={last['adx']:.0f}",
+                      reason=f"ST={'UP' if st_dir==1 else 'DOWN'}, ADX={adx:.0f}",
                       indicators=indicators)
