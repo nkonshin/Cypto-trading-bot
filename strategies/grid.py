@@ -141,8 +141,8 @@ class GridStrategy(BaseStrategy):
                 symbol=symbol, strategy=self.name,
                 reason=f"Grid BUY на уровне {closest_buy.price:.2f}",
                 indicators=indicators,
-                custom_sl_pct=self.range_pct / self.grid_levels * 2,  # SL = 2 шага сетки
-                custom_tp_pct=self.range_pct / self.grid_levels * 2,  # TP = 2 шага (R:R 1:1)
+                custom_sl_pct=self.range_pct + 1,
+                custom_tp_pct=self.range_pct / self.grid_levels,
             )
 
         if closest_sell and abs(current_price - closest_sell.price) < proximity_threshold:
@@ -226,8 +226,8 @@ class GridStrategy(BaseStrategy):
                 symbol=symbol, strategy=self.name,
                 reason=f"Grid BUY на уровне {closest_buy.price:.2f}",
                 indicators=indicators,
-                custom_sl_pct=self.range_pct / self.grid_levels * 2,
-                custom_tp_pct=self.range_pct / self.grid_levels * 2,
+                custom_sl_pct=self.range_pct + 1,
+                custom_tp_pct=self.range_pct / self.grid_levels,
             )
 
         if closest_sell and abs(current_price - closest_sell.price) < proximity_threshold:
@@ -237,8 +237,8 @@ class GridStrategy(BaseStrategy):
                 symbol=symbol, strategy=self.name,
                 reason=f"Grid SELL на уровне {closest_sell.price:.2f}",
                 indicators=indicators,
-                custom_sl_pct=self.range_pct / self.grid_levels * 2,
-                custom_tp_pct=self.range_pct / self.grid_levels * 2,
+                custom_sl_pct=self.range_pct + 1,
+                custom_tp_pct=self.range_pct / self.grid_levels,
             )
 
         return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,

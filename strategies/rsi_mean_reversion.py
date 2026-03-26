@@ -83,8 +83,8 @@ class RsiMeanReversionStrategy(BaseStrategy):
                 reason=f"RSI={last['rsi']:.0f} перепродан, цена у нижней BB"
                        + (", бычья дивергенция" if bullish_div else ""),
                 indicators=indicators,
-                custom_sl_pct=4.0,
-                custom_tp_pct=8.0,
+                custom_sl_pct=1.5,
+                custom_tp_pct=3.0,
             )
 
         # SELL: RSI перекуплен + цена у верхней BB
@@ -98,8 +98,8 @@ class RsiMeanReversionStrategy(BaseStrategy):
                 reason=f"RSI={last['rsi']:.0f} перекуплен, цена у верхней BB"
                        + (", медвежья дивергенция" if bearish_div else ""),
                 indicators=indicators,
-                custom_sl_pct=4.0,
-                custom_tp_pct=8.0,
+                custom_sl_pct=1.5,
+                custom_tp_pct=3.0,
             )
 
         # Close signals: RSI возвращается к нейтральной зоне
@@ -174,8 +174,8 @@ class RsiMeanReversionStrategy(BaseStrategy):
                 reason=f"RSI={last['rsi']:.0f} перепродан, цена у нижней BB"
                        + (", бычья дивергенция" if bullish_div else ""),
                 indicators=indicators,
-                custom_sl_pct=4.0,
-                custom_tp_pct=8.0,
+                custom_sl_pct=1.5,
+                custom_tp_pct=3.0,
             )
 
         # SELL
@@ -189,8 +189,8 @@ class RsiMeanReversionStrategy(BaseStrategy):
                 reason=f"RSI={last['rsi']:.0f} перекуплен, цена у верхней BB"
                        + (", медвежья дивергенция" if bearish_div else ""),
                 indicators=indicators,
-                custom_sl_pct=4.0,
-                custom_tp_pct=8.0,
+                custom_sl_pct=1.5,
+                custom_tp_pct=3.0,
             )
 
         # Close signals
