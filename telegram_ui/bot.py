@@ -823,7 +823,15 @@ class TelegramBot:
                 since_ms = int(since_dt.timestamp() * 1000)
                 until_ms = int(until_dt.timestamp() * 1000)
 
-                # Загружаем данные один раз для всех стратегий
+                import time as _time
+
+                # Загружаем данные
+                await query.edit_message_text(
+                    f"🔬 *Загрузка данных...*\n\n"
+                    f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
+                    f"Период: `{period_labels.get(period, period)}`",
+                    parse_mode="Markdown",
+                )
                 ohlcv = await fetch_ohlcv_range(symbol, tf, since=since_ms, until=until_ms)
 
                 if len(ohlcv) < 210:
@@ -833,13 +841,43 @@ class TelegramBot:
                     )
                     return
 
+                strategy_items = list(STRATEGY_MAP.items())
+                total_strategies = len(strategy_items)
                 results = []
-                for name, cls in STRATEGY_MAP.items():
+                start_time = _time.time()
+
+                for idx, (name, cls) in enumerate(strategy_items):
                     strategy = cls()
-                    # Переопределяем таймфрейм стратегии
                     strategy.timeframe = tf
                     if len(ohlcv) < strategy.min_candles:
                         continue
+
+                    # Обновляем прогресс
+                    pct = int((idx / total_strategies) * 100)
+                    elapsed = _time.time() - start_time
+                    if idx > 0:
+                        eta = elapsed / idx * (total_strategies - idx)
+                        eta_str = f"{int(eta)}с" if eta < 60 else f"{int(eta // 60)}м {int(eta % 60)}с"
+                    else:
+                        eta_str = "расчёт..."
+
+                    bar_len = 20
+                    filled = int(bar_len * idx / total_strategies)
+                    bar = "█" * filled + "░" * (bar_len - filled)
+
+                    try:
+                        await query.edit_message_text(
+                            f"🔬 *Сравнение стратегий*\n\n"
+                            f"`[{bar}]` {pct}%\n\n"
+                            f"Анализирую: `{strategy.name}`\n"
+                            f"Готово: {idx}/{total_strategies}\n"
+                            f"Свечей: {len(ohlcv)}\n"
+                            f"Осталось: ~{eta_str}",
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass  # Telegram rate limit, не критично
+
                     bt = Backtester(
                         strategy=strategy,
                         initial_balance=self.settings.paper_balance,
@@ -850,6 +888,15 @@ class TelegramBot:
                     )
                     result = bt.run(ohlcv, symbol)
                     results.append(result)
+
+                elapsed_total = _time.time() - start_time
+                elapsed_str = f"{int(elapsed_total)}с" if elapsed_total < 60 else f"{int(elapsed_total // 60)}м {int(elapsed_total % 60)}с"
+                await query.edit_message_text(
+                    f"🔬 *Сравнение завершено за {elapsed_str}*\n\n"
+                    f"`[████████████████████]` 100%\n"
+                    f"Стратегий: {len(results)} | Свечей: {len(ohlcv)}",
+                    parse_mode="Markdown",
+                )
 
                 if not results:
                     await query.edit_message_text("Нет результатов",
