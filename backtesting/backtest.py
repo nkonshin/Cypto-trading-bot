@@ -94,6 +94,7 @@ class Backtester:
         risk_per_trade_pct: float = 2.0,
         leverage: int = 5,
         commission_pct: float = 0.04,
+        slippage_pct: float = 0.05,
         stop_loss_pct: float = 2.0,
         take_profit_pct: float = 4.0,
     ):
@@ -102,6 +103,7 @@ class Backtester:
         self.risk_per_trade_pct = risk_per_trade_pct
         self.leverage = leverage
         self.commission_pct = commission_pct / 100
+        self.slippage_pct = slippage_pct / 100
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
 
@@ -212,25 +214,30 @@ class Backtester:
                 signal = self.strategy.analyze(window, symbol)
 
             if open_trade is None and signal.type in (SignalType.BUY, SignalType.SELL):
-                # Открываем позицию
+                # Открываем позицию (с учётом slippage)
+                if signal.type == SignalType.BUY:
+                    entry_price = current["close"] * (1 + self.slippage_pct)
+                else:
+                    entry_price = current["close"] * (1 - self.slippage_pct)
+
                 risk_amount = balance * (self.risk_per_trade_pct / 100)
                 sl_pct_actual = (signal.custom_sl_pct or self.stop_loss_pct) / 100
                 position_cost = min(risk_amount / sl_pct_actual, balance * 0.1)
-                amount = position_cost * self.leverage / current["close"]
+                amount = position_cost * self.leverage / entry_price
 
                 sl_pct_val = (signal.custom_sl_pct or self.stop_loss_pct) / 100
                 tp_pct_val = (signal.custom_tp_pct or self.take_profit_pct) / 100
                 if signal.type == SignalType.BUY:
-                    sl_price_calc = current["close"] * (1 - sl_pct_val)
-                    tp_price_calc = current["close"] * (1 + tp_pct_val)
+                    sl_price_calc = entry_price * (1 - sl_pct_val)
+                    tp_price_calc = entry_price * (1 + tp_pct_val)
                 else:
-                    sl_price_calc = current["close"] * (1 + sl_pct_val)
-                    tp_price_calc = current["close"] * (1 - tp_pct_val)
+                    sl_price_calc = entry_price * (1 + sl_pct_val)
+                    tp_price_calc = entry_price * (1 - tp_pct_val)
 
                 open_trade = BacktestTrade(
                     entry_idx=i,
                     side=signal.type.value,
-                    entry_price=current["close"],
+                    entry_price=entry_price,
                     amount=amount,
                     reason_entry=signal.reason,
                     entry_time=current["timestamp"].strftime("%Y-%m-%d %H:%M") if hasattr(current["timestamp"], "strftime") else str(current["timestamp"]),
