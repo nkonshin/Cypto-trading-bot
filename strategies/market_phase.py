@@ -173,6 +173,106 @@ def detect_market_phase(df: pd.DataFrame, lookback: int = 50) -> PhaseResult:
     )
 
 
+def detect_market_phase_at(df: pd.DataFrame, idx: int, lookback: int = 50) -> PhaseResult:
+    """
+    Быстрая версия detect_market_phase для предрассчитанного DataFrame.
+    Ожидает что df уже содержит колонки ema50, ema200, adx.
+    """
+    if idx < 200:
+        return PhaseResult(
+            phase=MarketPhase.SIDEWAYS, confidence=0.0,
+            adx=0, ema50=0, ema200=0, price=0,
+            higher_highs=False, lower_lows=False,
+            reason="Недостаточно данных",
+        )
+
+    last = df.iloc[idx]
+    price = last["close"]
+    ema50 = last["ema50"]
+    ema200 = last["ema200"]
+    adx = last["adx"]
+
+    # Наклон EMA 50
+    slope_start = max(0, idx - 10)
+    ema50_prev = df["ema50"].iloc[slope_start]
+    ema50_slope = (ema50 - ema50_prev) / ema50_prev * 100 if ema50_prev != 0 else 0
+
+    # Структура цены (упрощённая для скорости)
+    lb_start = max(0, idx - lookback + 1)
+    recent_high = df["high"].iloc[lb_start:idx + 1]
+    recent_low = df["low"].iloc[lb_start:idx + 1]
+
+    quarter = max(1, len(recent_high) // 4)
+    if len(recent_high) >= quarter * 2:
+        first_half_high = recent_high.iloc[:quarter * 2].max()
+        second_half_high = recent_high.iloc[quarter * 2:].max() if len(recent_high) > quarter * 2 else first_half_high
+        first_half_low = recent_low.iloc[:quarter * 2].min()
+        second_half_low = recent_low.iloc[quarter * 2:].min() if len(recent_low) > quarter * 2 else first_half_low
+        higher_highs = second_half_high > first_half_high
+        lower_lows = second_half_low < first_half_low
+    else:
+        higher_highs = False
+        lower_lows = False
+
+    # Голосование (та же логика)
+    signals = []
+
+    if ema50 > ema200:
+        signals.append("bullish")
+    elif ema50 < ema200:
+        signals.append("bearish")
+    else:
+        signals.append("sideways")
+
+    if price > ema50 > ema200:
+        signals.append("bullish")
+    elif price < ema50 < ema200:
+        signals.append("bearish")
+    else:
+        signals.append("sideways")
+
+    if adx < 20:
+        signals.append("sideways")
+    elif adx > 25:
+        signals.append("bullish" if ema50_slope > 0 else "bearish")
+
+    if higher_highs and not lower_lows:
+        signals.append("bullish")
+    elif lower_lows and not higher_highs:
+        signals.append("bearish")
+    else:
+        signals.append("sideways")
+
+    if ema50_slope > 0.5:
+        signals.append("bullish")
+    elif ema50_slope < -0.5:
+        signals.append("bearish")
+    else:
+        signals.append("sideways")
+
+    bull_count = signals.count("bullish")
+    bear_count = signals.count("bearish")
+    side_count = signals.count("sideways")
+    total = len(signals)
+
+    if bull_count > bear_count and bull_count > side_count:
+        phase = MarketPhase.BULLISH
+        confidence = bull_count / total
+    elif bear_count > bull_count and bear_count > side_count:
+        phase = MarketPhase.BEARISH
+        confidence = bear_count / total
+    else:
+        phase = MarketPhase.SIDEWAYS
+        confidence = side_count / total
+
+    return PhaseResult(
+        phase=phase, confidence=confidence,
+        adx=round(adx, 1), ema50=round(ema50, 2), ema200=round(ema200, 2),
+        price=round(price, 2), higher_highs=higher_highs, lower_lows=lower_lows,
+        reason=f"{phase.value}: ADX={adx:.0f}, slope={ema50_slope:+.1f}%",
+    )
+
+
 # Маппинг: какие стратегии лучше работают в каждой фазе
 PHASE_STRATEGY_MAP = {
     MarketPhase.BULLISH: [

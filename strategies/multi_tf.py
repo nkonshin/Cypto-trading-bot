@@ -19,7 +19,7 @@ import logging
 import pandas as pd
 import ta
 from strategies.base import BaseStrategy, Signal, SignalType
-from strategies.market_phase import detect_market_phase, MarketPhase, PHASE_STRATEGY_MAP
+from strategies.market_phase import detect_market_phase, detect_market_phase_at, MarketPhase, PHASE_STRATEGY_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -106,11 +106,8 @@ class MultiTimeframeStrategy(BaseStrategy):
             return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
                           reason="Недостаточно данных")
 
-        htf_df = resample_to_higher_tf(df.iloc[:idx + 1], self.higher_tf)
-        if len(htf_df) < 200:
-            htf_df = df.iloc[:idx + 1]
-
-        phase_result = detect_market_phase(htf_df)
+        # Используем предрассчитанные индикаторы вместо ресэмплинга
+        phase_result = detect_market_phase_at(df, idx)
 
         allowed = {
             MarketPhase.BULLISH: {SignalType.BUY},

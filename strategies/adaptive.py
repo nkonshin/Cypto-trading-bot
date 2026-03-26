@@ -12,7 +12,7 @@ import logging
 
 import pandas as pd
 from strategies.base import BaseStrategy, Signal, SignalType
-from strategies.market_phase import detect_market_phase, MarketPhase, PHASE_STRATEGY_MAP
+from strategies.market_phase import detect_market_phase, detect_market_phase_at, MarketPhase, PHASE_STRATEGY_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class AdaptiveStrategy(BaseStrategy):
             return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
                           reason="Недостаточно данных")
 
-        phase_result = detect_market_phase(df.iloc[:idx + 1])
+        phase_result = detect_market_phase_at(df, idx)
         self._current_phase = phase_result.phase
 
         strategy_names = PHASE_STRATEGY_MAP[phase_result.phase]
