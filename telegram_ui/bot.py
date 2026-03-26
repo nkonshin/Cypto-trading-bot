@@ -841,6 +841,15 @@ class TelegramBot:
                     )
                     return
 
+                # Для длинных ТФ автоматически снижаем плечо
+                leverage = risk_params["max_leverage"]
+                sl_pct = risk_params["stop_loss_pct"]
+                tp_pct = risk_params["take_profit_pct"]
+                if tf in ("4h", "1d", "1w"):
+                    leverage = min(leverage, 2)
+                    sl_pct = max(sl_pct, 10.0)
+                    tp_pct = max(tp_pct, 25.0)
+
                 strategy_items = list(STRATEGY_MAP.items())
                 total_strategies = len(strategy_items)
                 results = []
@@ -882,9 +891,9 @@ class TelegramBot:
                         strategy=strategy,
                         initial_balance=self.settings.paper_balance,
                         risk_per_trade_pct=risk_params["risk_per_trade_pct"],
-                        leverage=risk_params["max_leverage"],
-                        stop_loss_pct=risk_params["stop_loss_pct"],
-                        take_profit_pct=risk_params["take_profit_pct"],
+                        leverage=leverage,
+                        stop_loss_pct=sl_pct,
+                        take_profit_pct=tp_pct,
                     )
                     result = bt.run(ohlcv, symbol)
                     results.append(result)
