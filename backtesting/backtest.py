@@ -126,8 +126,24 @@ class Backtester:
         max_consecutive_losses = 0
 
         min_idx = self.strategy.min_candles
+        total = len(df) - min_idx
+        log_every = max(1, total // 20)  # логируем ~20 раз за бэктест
+
+        logger.info(
+            f"Бэктест {self.strategy.name}: {total} свечей, "
+            f"баланс {balance:.2f} USDT, SL {self.stop_loss_pct}%, TP {self.take_profit_pct}%"
+        )
 
         for i in range(min_idx, len(df)):
+            # Прогресс
+            progress = i - min_idx
+            if progress > 0 and progress % log_every == 0:
+                pct = progress / total * 100
+                logger.info(
+                    f"  [{self.strategy.name}] {pct:.0f}% ({progress}/{total}) | "
+                    f"Баланс: {balance:.2f} | Сделок: {len(trades)}"
+                )
+
             window = df.iloc[:i + 1].copy()
             current = df.iloc[i]
 
@@ -207,6 +223,12 @@ class Backtester:
                     leverage=self.leverage,
                 )
 
+                logger.info(
+                    f"  [{self.strategy.name}] ОТКРЫТА: {signal.type.value.upper()} "
+                    f"@ {current['close']:.2f} | SL: {sl_price_calc:.2f} | TP: {tp_price_calc:.2f} | "
+                    f"{signal.reason}"
+                )
+
                 if signal.custom_sl_pct:
                     self.stop_loss_pct = signal.custom_sl_pct
                 if signal.custom_tp_pct:
@@ -280,6 +302,13 @@ class Backtester:
 
         trade.pnl = pnl_raw - commission
         trade.pnl_pct = (trade.pnl / (trade.amount * trade.entry_price / self.leverage)) * 100
+
+        emoji = "+" if trade.pnl > 0 else ""
+        logger.info(
+            f"  [{self.strategy.name}] ЗАКРЫТА: {trade.side.upper()} "
+            f"@ {exit_price:.2f} | PnL: {emoji}{trade.pnl:.2f} ({emoji}{trade.pnl_pct:.1f}%) | "
+            f"{reason}"
+        )
 
         return trade
 
