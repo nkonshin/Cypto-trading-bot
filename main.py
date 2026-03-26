@@ -348,6 +348,10 @@ def main():
     parser.add_argument("--to", dest="date_to", type=str, default=None,
                         help="Дата окончания (YYYY-MM-DD)")
     parser.add_argument("--no-chart", action="store_true", help="Без графиков")
+    parser.add_argument("--hyperopt", action="store_true",
+                        help="Оптимизация параметров стратегии (Hyperopt)")
+    parser.add_argument("--trials", type=int, default=100,
+                        help="Количество итераций Hyperopt (по умолчанию 100)")
 
     args = parser.parse_args()
 
@@ -357,7 +361,39 @@ def main():
     symbol = args.symbol or settings.default_symbol
     balance = args.balance or settings.paper_balance
 
-    if args.compare:
+    if args.hyperopt:
+        # Оптимизация параметров
+        from backtesting.hyperopt import optimize_strategy, STRATEGY_FACTORIES
+
+        strategy_name = args.strategy or "ema_crossover"
+        if strategy_name not in STRATEGY_FACTORIES:
+            logger.error(f"Hyperopt не поддерживает '{strategy_name}'. Доступные: {list(STRATEGY_FACTORIES.keys())}")
+            sys.exit(1)
+
+        async def run_hyperopt():
+            since = parse_date(args.date_from) if args.date_from else None
+            until = parse_date(args.date_to) if args.date_to else None
+            ohlcv = await fetch_ohlcv_range(symbol, "4h", since, until)
+            print(f"\nHyperopt: {strategy_name} | {len(ohlcv)} свечей | {args.trials} итераций\n")
+
+            result = optimize_strategy(
+                strategy_factory=STRATEGY_FACTORIES[strategy_name],
+                ohlcv_data=ohlcv, symbol=symbol,
+                initial_balance=balance, leverage=5,
+                n_trials=args.trials, metric="sharpe",
+            )
+            r = result["result"]
+            print(f"\n{'='*60}")
+            print(f"Лучшие параметры: {result['best_params']}")
+            print(f"PnL: {r.total_pnl:+.2f} ({r.total_pnl_pct:+.1f}%)")
+            print(f"Win Rate: {r.win_rate:.1f}% | Сделок: {r.total_trades}")
+            print(f"Просадка: {r.max_drawdown_pct:.1f}% | Profit Factor: {r.profit_factor:.2f}")
+            print(f"Sharpe: {r.sharpe_ratio:.2f}")
+            print(f"{'='*60}\n")
+
+        asyncio.run(run_hyperopt())
+
+    elif args.compare:
         # Сравнение стратегий
         if args.strategies:
             strategy_names = [s.strip() for s in args.strategies.split(",")]
