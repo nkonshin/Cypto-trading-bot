@@ -42,27 +42,40 @@ class EmaCrossoverStrategy(BaseStrategy):
         last = df.iloc[-1]
         prev = df.iloc[-2]
 
+        # Защита от NaN
+        ema_fast = self.safe_val(last["ema_fast"])
+        ema_slow = self.safe_val(last["ema_slow"])
+        ema_trend = self.safe_val(last["ema_trend"])
+        close = self.safe_val(last["close"], 1.0)
+        vol_sma = self.safe_val(last["vol_sma"])
+
+        if ema_fast == 0 or ema_slow == 0 or ema_trend == 0:
+            return self._hold_signal(symbol, close, {"reason": "Индикаторы не готовы"})
+
         indicators = {
-            "ema_fast": round(last["ema_fast"], 2),
-            "ema_slow": round(last["ema_slow"], 2),
-            "ema_trend": round(last["ema_trend"], 2),
-            "price": round(last["close"], 2),
+            "ema_fast": round(ema_fast, 2),
+            "ema_slow": round(ema_slow, 2),
+            "ema_trend": round(ema_trend, 2),
+            "price": round(close, 2),
         }
 
+        prev_fast = self.safe_val(prev["ema_fast"])
+        prev_slow = self.safe_val(prev["ema_slow"])
+
         # Золотой крест: быстрая EMA пересекает медленную снизу вверх
-        golden_cross = prev["ema_fast"] <= prev["ema_slow"] and last["ema_fast"] > last["ema_slow"]
+        golden_cross = prev_fast <= prev_slow and ema_fast > ema_slow
         # Мёртвый крест: быстрая EMA пересекает медленную сверху вниз
-        death_cross = prev["ema_fast"] >= prev["ema_slow"] and last["ema_fast"] < last["ema_slow"]
+        death_cross = prev_fast >= prev_slow and ema_fast < ema_slow
 
         # Фильтр глобального тренда
-        uptrend = last["close"] > last["ema_trend"]
-        downtrend = last["close"] < last["ema_trend"]
+        uptrend = close > ema_trend
+        downtrend = close < ema_trend
 
         # Фильтр объёма (объём выше среднего)
-        volume_ok = last["volume"] > last["vol_sma"] * 0.8
+        volume_ok = vol_sma == 0 or last["volume"] > vol_sma * 0.8
 
         if golden_cross and uptrend and volume_ok:
-            strength = min(1.0, (last["ema_fast"] - last["ema_slow"]) / last["close"] * 100)
+            strength = min(1.0, self.safe_div(ema_fast - ema_slow, close) * 100)
             return Signal(
                 type=SignalType.BUY, strength=abs(strength), price=last["close"],
                 symbol=symbol, strategy=self.name,
@@ -71,7 +84,7 @@ class EmaCrossoverStrategy(BaseStrategy):
             )
 
         if death_cross and downtrend and volume_ok:
-            strength = min(1.0, (last["ema_slow"] - last["ema_fast"]) / last["close"] * 100)
+            strength = min(1.0, self.safe_div(ema_slow - ema_fast, close) * 100)
             return Signal(
                 type=SignalType.SELL, strength=abs(strength), price=last["close"],
                 symbol=symbol, strategy=self.name,
