@@ -110,7 +110,7 @@ class SupertrendStrategy(BaseStrategy):
 
             # Стоп-лосс — на уровне supertrend
             sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
-            sl_pct = max(1.0, min(sl_pct, 5.0))
+            sl_pct = max(3.0, min(sl_pct, 15.0))
 
             return Signal(
                 type=SignalType.BUY, strength=min(1.0, strength), price=last["close"],
@@ -134,7 +134,7 @@ class SupertrendStrategy(BaseStrategy):
                 strength = min(1.0, strength + 0.1)
 
             sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
-            sl_pct = max(1.0, min(sl_pct, 5.0))
+            sl_pct = max(3.0, min(sl_pct, 15.0))
 
             return Signal(
                 type=SignalType.SELL, strength=min(1.0, strength), price=last["close"],
@@ -209,7 +209,7 @@ class SupertrendStrategy(BaseStrategy):
                 strength = min(1.0, strength + 0.1)
 
             sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
-            sl_pct = max(1.0, min(sl_pct, 5.0))
+            sl_pct = max(3.0, min(sl_pct, 15.0))
 
             return Signal(
                 type=SignalType.BUY, strength=min(1.0, strength), price=last["close"],
@@ -233,7 +233,7 @@ class SupertrendStrategy(BaseStrategy):
                 strength = min(1.0, strength + 0.1)
 
             sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
-            sl_pct = max(1.0, min(sl_pct, 5.0))
+            sl_pct = max(3.0, min(sl_pct, 15.0))
 
             return Signal(
                 type=SignalType.SELL, strength=min(1.0, strength), price=last["close"],

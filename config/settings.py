@@ -108,7 +108,7 @@ class Settings(BaseSettings):
             },
             RiskLevel.SWING: {
                 "risk_per_trade_pct": 2.0,
-                "max_leverage": 3,
+                "max_leverage": 2,
                 "max_open_positions": 3,
                 "stop_loss_pct": 10.0,
                 "take_profit_pct": 25.0,

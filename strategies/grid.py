@@ -101,7 +101,15 @@ class GridStrategy(BaseStrategy):
             )
 
         # Инициализируем/обновляем сетку
-        if not self._initialized:
+        need_rebuild = not self._initialized
+        if self._initialized and self.grid:
+            # Пересоздаём сетку если цена вышла за её пределы
+            grid_prices = [l.price for l in self.grid]
+            grid_min, grid_max = min(grid_prices), max(grid_prices)
+            if current_price < grid_min * 0.95 or current_price > grid_max * 1.05:
+                need_rebuild = True
+
+        if need_rebuild:
             optimal_range, atr = self._find_optimal_range(df)
             self.range_pct = max(2.0, min(optimal_range, 8.0))
             self.grid = self._calculate_grid(current_price)
@@ -133,8 +141,8 @@ class GridStrategy(BaseStrategy):
                 symbol=symbol, strategy=self.name,
                 reason=f"Grid BUY на уровне {closest_buy.price:.2f}",
                 indicators=indicators,
-                custom_sl_pct=self.range_pct + 1,  # SL за пределами сетки
-                custom_tp_pct=self.range_pct / self.grid_levels,  # TP — один шаг сетки
+                custom_sl_pct=self.range_pct / self.grid_levels * 2,  # SL = 2 шага сетки
+                custom_tp_pct=self.range_pct / self.grid_levels * 2,  # TP = 2 шага (R:R 1:1)
             )
 
         if closest_sell and abs(current_price - closest_sell.price) < proximity_threshold:
@@ -180,7 +188,14 @@ class GridStrategy(BaseStrategy):
             )
 
         # Инициализируем/обновляем сетку
-        if not self._initialized:
+        need_rebuild = not self._initialized
+        if self._initialized and self.grid:
+            grid_prices = [l.price for l in self.grid]
+            grid_min, grid_max = min(grid_prices), max(grid_prices)
+            if current_price < grid_min * 0.95 or current_price > grid_max * 1.05:
+                need_rebuild = True
+
+        if need_rebuild:
             optimal_range, atr = self._find_optimal_range(df.iloc[:idx + 1])
             self.range_pct = max(2.0, min(optimal_range, 8.0))
             self.grid = self._calculate_grid(current_price)
@@ -211,8 +226,8 @@ class GridStrategy(BaseStrategy):
                 symbol=symbol, strategy=self.name,
                 reason=f"Grid BUY на уровне {closest_buy.price:.2f}",
                 indicators=indicators,
-                custom_sl_pct=self.range_pct + 1,
-                custom_tp_pct=self.range_pct / self.grid_levels,
+                custom_sl_pct=self.range_pct / self.grid_levels * 2,
+                custom_tp_pct=self.range_pct / self.grid_levels * 2,
             )
 
         if closest_sell and abs(current_price - closest_sell.price) < proximity_threshold:
@@ -222,8 +237,8 @@ class GridStrategy(BaseStrategy):
                 symbol=symbol, strategy=self.name,
                 reason=f"Grid SELL на уровне {closest_sell.price:.2f}",
                 indicators=indicators,
-                custom_sl_pct=self.range_pct + 1,
-                custom_tp_pct=self.range_pct / self.grid_levels,
+                custom_sl_pct=self.range_pct / self.grid_levels * 2,
+                custom_tp_pct=self.range_pct / self.grid_levels * 2,
             )
 
         return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
