@@ -98,3 +98,71 @@ class EmaCrossoverStrategy(BaseStrategy):
 
         return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
                       reason="Нет сигнала", indicators=indicators)
+
+    def precompute(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["ema_fast"] = ta.trend.ema_indicator(df["close"], window=self.fast_period)
+        df["ema_slow"] = ta.trend.ema_indicator(df["close"], window=self.slow_period)
+        df["ema_trend"] = ta.trend.ema_indicator(df["close"], window=self.trend_period)
+        df["vol_sma"] = df["volume"].rolling(window=20).mean()
+        return df
+
+    def analyze_at(self, df: pd.DataFrame, idx: int, symbol: str) -> Signal:
+        if idx + 1 < self.min_candles:
+            return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                          reason="Недостаточно данных")
+
+        last = df.iloc[idx]
+        prev = df.iloc[idx - 1]
+
+        indicators = {
+            "ema_fast": round(last["ema_fast"], 2),
+            "ema_slow": round(last["ema_slow"], 2),
+            "ema_trend": round(last["ema_trend"], 2),
+            "price": round(last["close"], 2),
+        }
+
+        golden_cross = prev["ema_fast"] <= prev["ema_slow"] and last["ema_fast"] > last["ema_slow"]
+        death_cross = prev["ema_fast"] >= prev["ema_slow"] and last["ema_fast"] < last["ema_slow"]
+
+        uptrend = last["close"] > last["ema_trend"]
+        downtrend = last["close"] < last["ema_trend"]
+
+        volume_ok = last["volume"] > last["vol_sma"] * 0.8
+
+        if golden_cross and uptrend and volume_ok:
+            strength = min(1.0, (last["ema_fast"] - last["ema_slow"]) / last["close"] * 100)
+            return Signal(
+                type=SignalType.BUY, strength=abs(strength), price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason=f"Золотой крест EMA{self.fast_period}/{self.slow_period}, цена выше EMA{self.trend_period}",
+                indicators=indicators,
+            )
+
+        if death_cross and downtrend and volume_ok:
+            strength = min(1.0, (last["ema_slow"] - last["ema_fast"]) / last["close"] * 100)
+            return Signal(
+                type=SignalType.SELL, strength=abs(strength), price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason=f"Мёртвый крест EMA{self.fast_period}/{self.slow_period}, цена ниже EMA{self.trend_period}",
+                indicators=indicators,
+            )
+
+        if death_cross and not downtrend:
+            return Signal(
+                type=SignalType.CLOSE_LONG, strength=0.5, price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason="Мёртвый крест — закрытие лонга",
+                indicators=indicators,
+            )
+
+        if golden_cross and not uptrend:
+            return Signal(
+                type=SignalType.CLOSE_SHORT, strength=0.5, price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason="Золотой крест — закрытие шорта",
+                indicators=indicators,
+            )
+
+        return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                      reason="Нет сигнала", indicators=indicators)

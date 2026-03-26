@@ -127,15 +127,28 @@ class Backtester:
 
         min_idx = self.strategy.min_candles
         total = len(df) - min_idx
-        log_every = max(1, total // 20)  # логируем ~20 раз за бэктест
+        log_every = max(1, total // 20)
 
-        logger.info(
-            f"Бэктест {self.strategy.name}: {total} свечей, "
-            f"баланс {balance:.2f} USDT, SL {self.stop_loss_pct}%, TP {self.take_profit_pct}%"
-        )
+        # Предрасчёт индикаторов один раз на всём DataFrame
+        has_precompute = hasattr(self.strategy, 'precompute') and hasattr(self.strategy, 'analyze_at')
+        if has_precompute:
+            try:
+                df = self.strategy.precompute(df)
+                logger.info(
+                    f"Бэктест {self.strategy.name}: {total} свечей (быстрый режим), "
+                    f"баланс {balance:.2f} USDT, SL {self.stop_loss_pct}%, TP {self.take_profit_pct}%"
+                )
+            except Exception as e:
+                logger.warning(f"precompute() не удался для {self.strategy.name}: {e}, фоллбэк на обычный режим")
+                has_precompute = False
+
+        if not has_precompute:
+            logger.info(
+                f"Бэктест {self.strategy.name}: {total} свечей, "
+                f"баланс {balance:.2f} USDT, SL {self.stop_loss_pct}%, TP {self.take_profit_pct}%"
+            )
 
         for i in range(min_idx, len(df)):
-            # Прогресс
             progress = i - min_idx
             if progress > 0 and progress % log_every == 0:
                 pct = progress / total * 100
@@ -144,7 +157,6 @@ class Backtester:
                     f"Баланс: {balance:.2f} | Сделок: {len(trades)}"
                 )
 
-            window = df.iloc[:i + 1].copy()
             current = df.iloc[i]
 
             # Проверяем SL/TP для открытой позиции
@@ -193,7 +205,11 @@ class Backtester:
                         open_trade = None
 
             # Получаем сигнал стратегии
-            signal = self.strategy.analyze(window, symbol)
+            if has_precompute:
+                signal = self.strategy.analyze_at(df, i, symbol)
+            else:
+                window = df.iloc[:i + 1].copy()
+                signal = self.strategy.analyze(window, symbol)
 
             if open_trade is None and signal.type in (SignalType.BUY, SignalType.SELL):
                 # Открываем позицию

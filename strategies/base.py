@@ -54,6 +54,23 @@ class BaseStrategy(ABC):
         """
         pass
 
+    def precompute(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Предрассчитывает индикаторы на всём DataFrame.
+        Вызывается один раз перед бэктестом для ускорения.
+        По умолчанию вызывает analyze() на полном df для расчёта индикаторов.
+        Стратегии могут переопределить для оптимизации.
+        """
+        return df
+
+    def analyze_at(self, df: pd.DataFrame, idx: int, symbol: str) -> Signal:
+        """
+        Анализирует данные на конкретном индексе (для быстрого бэктеста).
+        df уже содержит предрассчитанные индикаторы от precompute().
+        По умолчанию фоллбэк на analyze(df[:idx+1]).
+        """
+        return self.analyze(df.iloc[:idx + 1].copy(), symbol)
+
     @staticmethod
     def prepare_dataframe(ohlcv: list) -> pd.DataFrame:
         """Конвертирует сырые OHLCV данные в DataFrame."""

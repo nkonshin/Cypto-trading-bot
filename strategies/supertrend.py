@@ -167,3 +167,102 @@ class SupertrendStrategy(BaseStrategy):
         return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
                       reason=f"ST={'UP' if last['st_direction']==1 else 'DOWN'}, ADX={last['adx']:.0f}",
                       indicators=indicators)
+
+    def precompute(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df = self._calculate_supertrend(df)
+        df["adx"] = ta.trend.adx(df["high"], df["low"], df["close"], window=14)
+        df["di_plus"] = ta.trend.adx_pos(df["high"], df["low"], df["close"], window=14)
+        df["di_minus"] = ta.trend.adx_neg(df["high"], df["low"], df["close"], window=14)
+        df["vol_sma"] = df["volume"].rolling(window=20).mean()
+        return df
+
+    def analyze_at(self, df: pd.DataFrame, idx: int, symbol: str) -> Signal:
+        if idx + 1 < self.min_candles:
+            return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                          reason="Недостаточно данных")
+
+        last = df.iloc[idx]
+        prev = df.iloc[idx - 1]
+
+        indicators = {
+            "price": round(last["close"], 2),
+            "supertrend": round(last["supertrend"], 2),
+            "direction": int(last["st_direction"]),
+            "adx": round(last["adx"], 1),
+            "di_plus": round(last["di_plus"], 1),
+            "di_minus": round(last["di_minus"], 1),
+        }
+
+        direction_changed = prev["st_direction"] != last["st_direction"]
+        strong_trend = last["adx"] > self.adx_threshold
+        volume_spike = last["volume"] > last["vol_sma"] * 1.2
+
+        # BUY
+        if direction_changed and last["st_direction"] == 1:
+            strength = 0.5
+            if strong_trend:
+                strength += 0.3
+            if volume_spike:
+                strength += 0.2
+            if last["di_plus"] > last["di_minus"]:
+                strength = min(1.0, strength + 0.1)
+
+            sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
+            sl_pct = max(1.0, min(sl_pct, 5.0))
+
+            return Signal(
+                type=SignalType.BUY, strength=min(1.0, strength), price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason=f"Supertrend BUY, ADX={last['adx']:.0f}"
+                       + (", сильный тренд" if strong_trend else "")
+                       + (", повышенный объём" if volume_spike else ""),
+                indicators=indicators,
+                custom_sl_pct=sl_pct,
+                custom_tp_pct=sl_pct * 2,
+            )
+
+        # SELL
+        if direction_changed and last["st_direction"] == -1:
+            strength = 0.5
+            if strong_trend:
+                strength += 0.3
+            if volume_spike:
+                strength += 0.2
+            if last["di_minus"] > last["di_plus"]:
+                strength = min(1.0, strength + 0.1)
+
+            sl_pct = abs(last["close"] - last["supertrend"]) / last["close"] * 100
+            sl_pct = max(1.0, min(sl_pct, 5.0))
+
+            return Signal(
+                type=SignalType.SELL, strength=min(1.0, strength), price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason=f"Supertrend SELL, ADX={last['adx']:.0f}"
+                       + (", сильный тренд" if strong_trend else "")
+                       + (", повышенный объём" if volume_spike else ""),
+                indicators=indicators,
+                custom_sl_pct=sl_pct,
+                custom_tp_pct=sl_pct * 2,
+            )
+
+        # Закрытие позиции при ослаблении тренда
+        if last["st_direction"] == 1 and last["adx"] < 15 and prev["adx"] >= 15:
+            return Signal(
+                type=SignalType.CLOSE_LONG, strength=0.4, price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason=f"ADX упал ниже 15 — тренд ослаб",
+                indicators=indicators,
+            )
+
+        if last["st_direction"] == -1 and last["adx"] < 15 and prev["adx"] >= 15:
+            return Signal(
+                type=SignalType.CLOSE_SHORT, strength=0.4, price=last["close"],
+                symbol=symbol, strategy=self.name,
+                reason=f"ADX упал ниже 15 — тренд ослаб",
+                indicators=indicators,
+            )
+
+        return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                      reason=f"ST={'UP' if last['st_direction']==1 else 'DOWN'}, ADX={last['adx']:.0f}",
+                      indicators=indicators)
