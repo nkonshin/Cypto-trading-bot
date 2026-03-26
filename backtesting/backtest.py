@@ -32,6 +32,8 @@ class BacktestTrade:
     stop_loss: float = 0
     take_profit: float = 0
     leverage: int = 1
+    custom_sl_pct: Optional[float] = None
+    custom_tp_pct: Optional[float] = None
 
 
 @dataclass
@@ -244,6 +246,8 @@ class Backtester:
                     stop_loss=round(sl_price_calc, 2),
                     take_profit=round(tp_price_calc, 2),
                     leverage=self.leverage,
+                    custom_sl_pct=signal.custom_sl_pct,
+                    custom_tp_pct=signal.custom_tp_pct,
                 )
 
                 logger.info(
