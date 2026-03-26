@@ -735,22 +735,109 @@ class TelegramBot:
                                               reply_markup=self._back_keyboard())
 
         elif data == "compare_all":
+            # Шаг 1: выбор таймфрейма
+            keyboard = [
+                [InlineKeyboardButton("1h", callback_data="cmp_tf_1h"),
+                 InlineKeyboardButton("4h", callback_data="cmp_tf_4h")],
+                [InlineKeyboardButton("1d", callback_data="cmp_tf_1d"),
+                 InlineKeyboardButton("1w", callback_data="cmp_tf_1w")],
+                [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+            ]
             await query.edit_message_text(
-                "🔬 Сравниваю все стратегии... Подождите 1-2 минуты.")
+                "📊 *Сравнение стратегий*\n\n"
+                "Шаг 1/2: Выберите таймфрейм:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("cmp_tf_"):
+            # Шаг 2: выбор периода
+            tf = data.replace("cmp_tf_", "")
+            keyboard = [
+                [InlineKeyboardButton("1 мес", callback_data=f"cmp_run_{tf}_1m"),
+                 InlineKeyboardButton("3 мес", callback_data=f"cmp_run_{tf}_3m")],
+                [InlineKeyboardButton("6 мес", callback_data=f"cmp_run_{tf}_6m"),
+                 InlineKeyboardButton("1 год", callback_data=f"cmp_run_{tf}_1y")],
+                [InlineKeyboardButton("3 года", callback_data=f"cmp_run_{tf}_3y"),
+                 InlineKeyboardButton("5 лет", callback_data=f"cmp_run_{tf}_5y")],
+                [InlineKeyboardButton("8 лет", callback_data=f"cmp_run_{tf}_8y")],
+                [InlineKeyboardButton("◀️ Назад", callback_data="compare_all")],
+            ]
+            tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
+            await query.edit_message_text(
+                f"📊 *Сравнение стратегий*\n\n"
+                f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
+                f"Шаг 2/2: Выберите период:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("cmp_run_"):
+            # Шаг 3: запуск сравнения
+            parts = data.replace("cmp_run_", "").split("_")
+            tf = parts[0]
+            period = parts[1]
+
+            # Конвертируем период в дни
+            period_days = {
+                "1m": 30, "3m": 90, "6m": 180,
+                "1y": 365, "3y": 1095, "5y": 1825, "8y": 2920,
+            }
+            period_labels = {
+                "1m": "1 месяц", "3m": "3 месяца", "6m": "6 месяцев",
+                "1y": "1 год", "3y": "3 года", "5y": "5 лет", "8y": "8 лет",
+            }
+            tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
+            days = period_days.get(period, 30)
+
+            # Оценка времени
+            candles_estimate = {
+                "1h": days * 24, "4h": days * 6, "1d": days, "1w": days // 7,
+            }
+            est_candles = candles_estimate.get(tf, days * 6)
+            est_minutes = max(1, est_candles // 2000)
+
+            await query.edit_message_text(
+                f"🔬 *Сравниваю все стратегии...*\n\n"
+                f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
+                f"Период: `{period_labels.get(period, period)}`\n"
+                f"~{est_candles} свечей\n\n"
+                f"Ожидание: ~{est_minutes} мин.",
+                parse_mode="Markdown",
+            )
+
             try:
                 from backtesting.backtest import Backtester
                 from backtesting.visualizer import (
                     plot_comparison, format_comparison_table_telegram,
                 )
-                from main import fetch_ohlcv_range
+                from main import fetch_ohlcv_range, parse_date
+                from datetime import datetime, timedelta
 
                 symbol = self.settings.default_symbol
                 risk_params = self.settings.get_risk_params()
-                results = []
 
+                # Вычисляем даты
+                until_dt = datetime.utcnow()
+                since_dt = until_dt - timedelta(days=days)
+                since_ms = int(since_dt.timestamp() * 1000)
+                until_ms = int(until_dt.timestamp() * 1000)
+
+                # Загружаем данные один раз для всех стратегий
+                ohlcv = await fetch_ohlcv_range(symbol, tf, since=since_ms, until=until_ms)
+
+                if len(ohlcv) < 210:
+                    await query.edit_message_text(
+                        f"Недостаточно данных: {len(ohlcv)} свечей (нужно 210+)",
+                        reply_markup=self._back_keyboard(),
+                    )
+                    return
+
+                results = []
                 for name, cls in STRATEGY_MAP.items():
                     strategy = cls()
-                    ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe)
+                    # Переопределяем таймфрейм стратегии
+                    strategy.timeframe = tf
                     if len(ohlcv) < strategy.min_candles:
                         continue
                     bt = Backtester(
@@ -777,7 +864,7 @@ class TelegramBot:
                     import io as _io
                     await query.message.reply_photo(
                         photo=_io.BytesIO(chart_bytes),
-                        caption=f"📊 Сравнение {len(results)} стратегий | {symbol}",
+                        caption=f"📊 Сравнение {len(results)} стратегий | {symbol} | {tf_labels.get(tf, tf)} | {period_labels.get(period, period)}",
                     )
 
                 from backtesting.excel_export import export_comparison
@@ -785,7 +872,7 @@ class TelegramBot:
                 xlsx_bytes = export_comparison(results)
                 await query.message.reply_document(
                     document=_io2.BytesIO(xlsx_bytes),
-                    filename=f"comparison_{symbol.replace('/', '_')}.xlsx",
+                    filename=f"comparison_{symbol.replace('/', '_')}_{tf}_{period}.xlsx",
                     caption="📋 Подробный отчёт — сравнение + сделки по каждой стратегии",
                 )
                 await query.message.reply_text(
