@@ -7,6 +7,7 @@ from strategies.supertrend import SupertrendStrategy
 from strategies.multi_indicator import MultiIndicatorStrategy
 from strategies.adaptive import AdaptiveStrategy
 from strategies.multi_tf import MultiTimeframeStrategy
+from strategies.trend_rider import TrendRiderStrategy
 
 STRATEGY_MAP = {
     "ema_crossover": EmaCrossoverStrategy,
@@ -17,6 +18,7 @@ STRATEGY_MAP = {
     "multi_indicator": MultiIndicatorStrategy,
     "adaptive": AdaptiveStrategy,
     "multi_tf": MultiTimeframeStrategy,
+    "trend_rider": TrendRiderStrategy,
 }
 
 __all__ = [
