@@ -100,16 +100,8 @@ class GridStrategy(BaseStrategy):
                 indicators=indicators,
             )
 
-        # Инициализируем/обновляем сетку
-        need_rebuild = not self._initialized
-        if self._initialized and self.grid:
-            # Пересоздаём сетку если цена вышла за её пределы
-            grid_prices = [l.price for l in self.grid]
-            grid_min, grid_max = min(grid_prices), max(grid_prices)
-            if current_price < grid_min * 0.95 or current_price > grid_max * 1.05:
-                need_rebuild = True
-
-        if need_rebuild:
+        # Инициализируем сетку
+        if not self._initialized:
             optimal_range, atr = self._find_optimal_range(df)
             self.range_pct = max(2.0, min(optimal_range, 8.0))
             self.grid = self._calculate_grid(current_price)
@@ -187,15 +179,8 @@ class GridStrategy(BaseStrategy):
                 indicators=indicators,
             )
 
-        # Инициализируем/обновляем сетку
-        need_rebuild = not self._initialized
-        if self._initialized and self.grid:
-            grid_prices = [l.price for l in self.grid]
-            grid_min, grid_max = min(grid_prices), max(grid_prices)
-            if current_price < grid_min * 0.95 or current_price > grid_max * 1.05:
-                need_rebuild = True
-
-        if need_rebuild:
+        # Инициализируем сетку
+        if not self._initialized:
             optimal_range, atr = self._find_optimal_range(df.iloc[:idx + 1])
             self.range_pct = max(2.0, min(optimal_range, 8.0))
             self.grid = self._calculate_grid(current_price)
