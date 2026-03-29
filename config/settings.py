@@ -31,6 +31,8 @@ class StrategyName(str, Enum):
     MULTI_TF = "multi_tf"
     TREND_RIDER = "trend_rider"
     MOMENTUM_BREAKOUT = "momentum_breakout"
+    REGIME_SWITCHER = "regime_switcher"
+    BB_SQUEEZE = "bb_squeeze"
 
 
 class Settings(BaseSettings):

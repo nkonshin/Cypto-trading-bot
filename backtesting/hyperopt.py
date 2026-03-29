@@ -176,6 +176,17 @@ def momentum_breakout_factory(trial: optuna.Trial):
     )
 
 
+def bb_squeeze_factory(trial: optuna.Trial):
+    from strategies.bb_squeeze import BBSqueezeStrategy
+    return BBSqueezeStrategy(
+        bb_period=trial.suggest_int("bb_period", 15, 30),
+        bb_std=trial.suggest_float("bb_std", 1.5, 3.0, step=0.25),
+        squeeze_threshold=trial.suggest_float("squeeze_threshold", 0.02, 0.06, step=0.01),
+        kc_mult=trial.suggest_float("kc_mult", 1.0, 2.5, step=0.25),
+        atr_period=trial.suggest_int("atr_period", 10, 20),
+    )
+
+
 STRATEGY_FACTORIES = {
     "ema_crossover": ema_crossover_factory,
     "rsi_mean_reversion": rsi_mean_reversion_factory,
@@ -183,4 +194,5 @@ STRATEGY_FACTORIES = {
     "multi_indicator": multi_indicator_factory,
     "trend_rider": trend_rider_factory,
     "momentum_breakout": momentum_breakout_factory,
+    "bb_squeeze": bb_squeeze_factory,
 }
