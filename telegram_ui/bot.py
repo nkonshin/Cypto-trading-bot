@@ -753,7 +753,7 @@ class TelegramBot:
             ]
             await query.edit_message_text(
                 "📊 *Сравнение стратегий*\n\n"
-                "Шаг 1/2: Выберите таймфрейм:",
+                "Шаг 1/4: Выберите таймфрейм:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown",
             )
@@ -762,29 +762,76 @@ class TelegramBot:
             # Шаг 2: выбор периода
             tf = data.replace("cmp_tf_", "")
             keyboard = [
-                [InlineKeyboardButton("1 мес", callback_data=f"cmp_run_{tf}_1m"),
-                 InlineKeyboardButton("3 мес", callback_data=f"cmp_run_{tf}_3m")],
-                [InlineKeyboardButton("6 мес", callback_data=f"cmp_run_{tf}_6m"),
-                 InlineKeyboardButton("1 год", callback_data=f"cmp_run_{tf}_1y")],
-                [InlineKeyboardButton("3 года", callback_data=f"cmp_run_{tf}_3y"),
-                 InlineKeyboardButton("5 лет", callback_data=f"cmp_run_{tf}_5y")],
-                [InlineKeyboardButton("8 лет", callback_data=f"cmp_run_{tf}_8y")],
+                [InlineKeyboardButton("1 мес", callback_data=f"cmp_per_{tf}_1m"),
+                 InlineKeyboardButton("3 мес", callback_data=f"cmp_per_{tf}_3m")],
+                [InlineKeyboardButton("6 мес", callback_data=f"cmp_per_{tf}_6m"),
+                 InlineKeyboardButton("1 год", callback_data=f"cmp_per_{tf}_1y")],
+                [InlineKeyboardButton("3 года", callback_data=f"cmp_per_{tf}_3y"),
+                 InlineKeyboardButton("5 лет", callback_data=f"cmp_per_{tf}_5y")],
+                [InlineKeyboardButton("8 лет", callback_data=f"cmp_per_{tf}_8y")],
                 [InlineKeyboardButton("◀️ Назад", callback_data="compare_all")],
             ]
             tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
             await query.edit_message_text(
                 f"📊 *Сравнение стратегий*\n\n"
                 f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
-                f"Шаг 2/2: Выберите период:",
+                f"Шаг 2/4: Выберите период:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("cmp_per_"):
+            # Шаг 3: выбор TP-режима
+            parts = data.replace("cmp_per_", "").split("_")
+            tf = parts[0]
+            period = parts[1]
+            tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
+            keyboard = [
+                [InlineKeyboardButton("Полный TP (100%)", callback_data=f"cmp_tp_{tf}_{period}_full")],
+                [InlineKeyboardButton("50/50 + безубыток", callback_data=f"cmp_tp_{tf}_{period}_half")],
+                [InlineKeyboardButton("По третям (33/33/34)", callback_data=f"cmp_tp_{tf}_{period}_thirds")],
+                [InlineKeyboardButton("Быстрая фиксация (75/25)", callback_data=f"cmp_tp_{tf}_{period}_scalp")],
+                [InlineKeyboardButton("◀️ Назад", callback_data=f"cmp_tf_{tf}")],
+            ]
+            period_labels = {"1m": "1 мес", "3m": "3 мес", "6m": "6 мес", "1y": "1 год", "3y": "3 года", "5y": "5 лет", "8y": "8 лет"}
+            await query.edit_message_text(
+                f"📊 *Сравнение стратегий*\n\n"
+                f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
+                f"Период: `{period_labels.get(period, period)}`\n"
+                f"Шаг 3/4: Режим тейк-профита:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("cmp_tp_"):
+            # Шаг 4: дефолт или оптимизированные
+            parts = data.replace("cmp_tp_", "").split("_")
+            tf, period, tp_mode = parts[0], parts[1], parts[2]
+            tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
+            period_labels = {"1m": "1 мес", "3m": "3 мес", "6m": "6 мес", "1y": "1 год", "3y": "3 года", "5y": "5 лет", "8y": "8 лет"}
+            tp_labels = {"full": "Полный", "half": "50/50", "thirds": "По третям", "scalp": "Быстрая"}
+            keyboard = [
+                [InlineKeyboardButton("Дефолтные параметры", callback_data=f"cmp_run_{tf}_{period}_{tp_mode}_def")],
+                [InlineKeyboardButton("Оптимизированные (Hyperopt)", callback_data=f"cmp_run_{tf}_{period}_{tp_mode}_opt")],
+                [InlineKeyboardButton("◀️ Назад", callback_data=f"cmp_per_{tf}_{period}")],
+            ]
+            await query.edit_message_text(
+                f"📊 *Сравнение стратегий*\n\n"
+                f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
+                f"Период: `{period_labels.get(period, period)}`\n"
+                f"TP: `{tp_labels.get(tp_mode, tp_mode)}`\n"
+                f"Шаг 4/4: Параметры стратегий:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown",
             )
 
         elif data.startswith("cmp_run_"):
-            # Шаг 3: запуск сравнения
+            # Запуск сравнения
             parts = data.replace("cmp_run_", "").split("_")
             tf = parts[0]
             period = parts[1]
+            tp_mode = parts[2] if len(parts) > 2 else "full"
+            use_optimized = parts[3] == "opt" if len(parts) > 3 else False
 
             # Конвертируем период в дни
             period_days = {
@@ -858,8 +905,22 @@ class TelegramBot:
                 results = []
                 start_time = _time.time()
 
+                tp_labels = {"full": "Полный", "half": "50/50", "thirds": "По третям", "scalp": "Быстрая"}
+                opt_label = "Оптимизированные" if use_optimized else "Дефолтные"
+
                 for idx, (name, cls) in enumerate(strategy_items):
-                    strategy = cls()
+                    # Оптимизированные или дефолтные параметры
+                    if use_optimized:
+                        from backtesting.optimized_params import get_optimized_strategy, OPTIMIZED_PARAMS
+                        strategy = get_optimized_strategy(name)
+                        opt_params = OPTIMIZED_PARAMS.get(name, {}).get("backtest_params", {})
+                        strat_sl = opt_params.get("stop_loss_pct", sl_pct)
+                        strat_tp = opt_params.get("take_profit_pct", tp_pct)
+                    else:
+                        strategy = cls()
+                        strat_sl = sl_pct
+                        strat_tp = tp_pct
+
                     strategy.timeframe = tf
                     if len(ohlcv) < strategy.min_candles:
                         continue
@@ -884,21 +945,22 @@ class TelegramBot:
                             f"Анализирую: `{strategy.name}`\n"
                             f"Готово: {idx}/{total_strategies}\n"
                             f"Свечей: {len(ohlcv)}\n"
-                            f"Риск: `{self.settings.risk_level.value}` | "
-                            f"SL {sl_pct}% | TP {tp_pct}% | {leverage}x\n"
+                            f"Параметры: `{opt_label}` | TP: `{tp_labels.get(tp_mode, tp_mode)}`\n"
+                            f"Риск: `{self.settings.risk_level.value}` | {leverage}x\n"
                             f"Осталось: ~{eta_str}",
                             parse_mode="Markdown",
                         )
                     except Exception:
-                        pass  # Telegram rate limit, не критично
+                        pass
 
                     bt = Backtester(
                         strategy=strategy,
                         initial_balance=self.settings.paper_balance,
                         risk_per_trade_pct=risk_params["risk_per_trade_pct"],
                         leverage=leverage,
-                        stop_loss_pct=sl_pct,
-                        take_profit_pct=tp_pct,
+                        stop_loss_pct=strat_sl,
+                        take_profit_pct=strat_tp,
+                        tp_mode=tp_mode,
                     )
                     result = bt.run(ohlcv, symbol)
                     results.append(result)
