@@ -171,7 +171,6 @@ def _write_trades_sheet(ws, result: BacktestResult):
     for col, header in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=header)
     _style_header(ws, 1, len(headers))
-    _add_header_comments(ws, headers)
 
     for i, t in enumerate(result.trades, 1):
         row = i + 1
@@ -242,7 +241,6 @@ def _write_comparison_sheet(ws, results: list[BacktestResult]):
     for col, header in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=header)
     _style_header(ws, 1, len(headers))
-    _add_header_comments(ws, headers)
 
     sorted_results = sorted(results, key=lambda r: r.total_pnl_pct, reverse=True)
 
@@ -265,4 +263,39 @@ def _write_comparison_sheet(ws, results: list[BacktestResult]):
             for col in range(1, len(headers) + 1):
                 ws.cell(row=row, column=col).fill = fill
 
+    # Глоссарий метрик под таблицей
+    glossary = [
+        ("Win Rate", "Процент прибыльных сделок от общего числа. >50% — хороший показатель."),
+        ("PnL", "Profit and Loss — общая прибыль или убыток. В USDT и в % от начального баланса."),
+        ("Просадка", "Максимальное падение баланса от пика. <10% — отлично, <20% — приемлемо, >30% — рискованно."),
+        ("Профит-фактор", "Сумма прибыли / сумма убытков. >1 — прибыльно, >1.5 — хорошо, >2 — отлично."),
+        ("Sharpe Ratio", "Доходность с учётом риска (волатильности). >0.5 — приемлемо, >1 — хорошо, >2 — отлично."),
+        ("Лучшая / Худшая сделка", "Максимальная прибыль и максимальный убыток по одной сделке в USDT."),
+        ("Убытков подряд", "Макс. серия убыточных сделок подряд. Показывает устойчивость к чёрным полосам."),
+    ]
+
+    glossary_start = len(sorted_results) + 4  # 2 строки отступа после таблицы
+
+    # Заголовок глоссария
+    cell = ws.cell(row=glossary_start, column=1, value="Глоссарий метрик")
+    cell.font = Font(bold=True, size=12)
+
+    glossary_start += 1
+    term_font = Font(bold=True, size=10, color="2F5496")
+    desc_font = Font(size=10, color="444444")
+
+    for idx, (term, desc) in enumerate(glossary):
+        row = glossary_start + idx
+        cell_term = ws.cell(row=row, column=1, value=term)
+        cell_term.font = term_font
+        cell_term.alignment = Alignment(horizontal="left")
+
+        cell_desc = ws.cell(row=row, column=2, value=desc)
+        cell_desc.font = desc_font
+        cell_desc.alignment = Alignment(horizontal="left", wrap_text=True)
+        # Объединяем ячейки 2-6 чтобы описание влезло
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=6)
+
     _auto_width(ws)
+    # Делаем колонку 1 шире для терминов
+    ws.column_dimensions["A"].width = max(ws.column_dimensions["A"].width, 22)
