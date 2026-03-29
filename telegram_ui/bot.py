@@ -170,10 +170,9 @@ class TelegramBot:
             return
 
         risk_labels = {
-            "conservative": "Conservative (SL 1.5%, TP 3%, 3x)",
-            "moderate": "Moderate (SL 2%, TP 4%, 5x)",
-            "aggressive": "Aggressive (SL 3%, TP 6%, 10x)",
-            "swing": "Swing (SL 10%, TP 25%, 2x)",
+            "conservative": "Safe — 1% риска на сделку",
+            "moderate": "Normal — 2% риска на сделку",
+            "aggressive": "Bold — 4% риска на сделку",
         }
         keyboard = [
             [InlineKeyboardButton(
@@ -186,14 +185,11 @@ class TelegramBot:
 
         current = self.settings.get_risk_params()
         text = (
-            f"⚙️ *Управление рисками*\n\n"
-            f"Текущий уровень: `{self.settings.risk_level.value}`\n"
-            f"Риск на сделку: `{current['risk_per_trade_pct']}%`\n"
-            f"Макс. плечо: `{current['max_leverage']}x`\n"
-            f"Макс. позиций: `{current['max_open_positions']}`\n"
-            f"Стоп-лосс: `{current['stop_loss_pct']}%`\n"
-            f"Тейк-профит: `{current['take_profit_pct']}%`\n\n"
-            f"Влияет на бэктест и сравнение стратегий."
+            f"🎯 *Риск на сделку*\n\n"
+            f"Текущий: `{self.settings.risk_level.value}`\n"
+            f"Риск: `{current['risk_per_trade_pct']}%` от баланса\n"
+            f"Макс. позиций: `{current['max_open_positions']}`\n\n"
+            f"При стопе теряете {current['risk_per_trade_pct']}% баланса."
         )
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard),
                                          parse_mode="Markdown")
@@ -671,10 +667,9 @@ class TelegramBot:
 
         elif data == "show_risk":
             risk_labels = {
-                "conservative": "Conservative (SL 1.5%, TP 3%, 3x)",
-                "moderate": "Moderate (SL 2%, TP 4%, 5x)",
-                "aggressive": "Aggressive (SL 3%, TP 6%, 10x)",
-                "swing": "Swing (SL 10%, TP 25%, 2x)",
+                "conservative": "Safe — 1% риска на сделку",
+                "moderate": "Normal — 2% риска на сделку",
+                "aggressive": "Bold — 4% риска на сделку",
             }
             keyboard = [
                 [InlineKeyboardButton(
@@ -687,12 +682,12 @@ class TelegramBot:
             keyboard.append(self._back_button())
             current = self.settings.get_risk_params()
             await query.edit_message_text(
-                f"🎯 *Уровень риска*\n\n"
+                f"🎯 *Риск на сделку*\n\n"
                 f"Текущий: `{self.settings.risk_level.value}`\n"
-                f"Риск/сделка: `{current['risk_per_trade_pct']}%`\n"
-                f"Плечо: `{current['max_leverage']}x`\n"
-                f"SL: `{current['stop_loss_pct']}%` | TP: `{current['take_profit_pct']}%`\n\n"
-                f"Влияет на бэктест и сравнение.",
+                f"Риск: `{current['risk_per_trade_pct']}%` от баланса\n"
+                f"Макс. позиций: `{current['max_open_positions']}`\n\n"
+                f"Определяет сколько % баланса потеряете\n"
+                f"при срабатывании стоп-лосса.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown",
             )
@@ -829,10 +824,7 @@ class TelegramBot:
                     ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe)
 
                 risk_params = self.settings.get_risk_params()
-                # Автоплечо: на длинных ТФ снижаем чтобы стопы не убивали
                 leverage = risk_params["max_leverage"]
-                if tf in ("4h", "1d", "1w") and leverage > 3:
-                    leverage = 3
 
                 bt = Backtester(
                     strategy=strategy,
@@ -1039,9 +1031,6 @@ class TelegramBot:
                 leverage = risk_params["max_leverage"]
                 sl_pct = risk_params["stop_loss_pct"]
                 tp_pct = risk_params["take_profit_pct"]
-                # Автоплечо для длинных ТФ
-                if tf in ("4h", "1d", "1w") and leverage > 3:
-                    leverage = 3
 
                 strategy_items = list(STRATEGY_MAP.items())
                 total_strategies = len(strategy_items)

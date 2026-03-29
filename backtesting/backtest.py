@@ -332,10 +332,12 @@ class Backtester:
                 else:
                     entry_price = current["close"] * (1 - self.slippage_pct)
 
+                # Размер позиции = risk_amount / SL%
+                # Плечо НЕ влияет на размер -- только на маржу
                 risk_amount = balance * (self.risk_per_trade_pct / 100)
                 sl_pct_actual = (signal.custom_sl_pct or self.stop_loss_pct) / 100
-                position_cost = min(risk_amount / sl_pct_actual, balance * 0.1)
-                amount = position_cost * self.leverage / entry_price
+                position_cost = risk_amount / sl_pct_actual
+                amount = position_cost / entry_price
 
                 sl_pct_val = (signal.custom_sl_pct or self.stop_loss_pct) / 100
                 tp_pct_val = (signal.custom_tp_pct or self.take_profit_pct) / 100
@@ -444,7 +446,9 @@ class Backtester:
         commission += trade.amount * exit_price * self.commission_pct
 
         trade.pnl = pnl_raw - commission
-        trade.pnl_pct = (trade.pnl / (trade.amount * trade.entry_price / self.leverage)) * 100
+        # PnL% от стоимости позиции (без учёта плеча)
+        position_value = trade.amount * trade.entry_price
+        trade.pnl_pct = (trade.pnl / position_value * 100) if position_value > 0 else 0
 
         emoji = "+" if trade.pnl > 0 else ""
         logger.info(

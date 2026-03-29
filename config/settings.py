@@ -15,10 +15,9 @@ class TradingMode(str, Enum):
 
 
 class RiskLevel(str, Enum):
-    CONSERVATIVE = "conservative"  # 1% риск на сделку, низкое плечо
-    MODERATE = "moderate"          # 2% риск на сделку, среднее плечо
-    AGGRESSIVE = "aggressive"      # 3-5% риск на сделку, высокое плечо
-    SWING = "swing"                # Долгосрочный: SL 10%, TP 25%, R:R 1:2.5
+    CONSERVATIVE = "conservative"  # 1% риск на сделку
+    MODERATE = "moderate"          # 2% риск на сделку
+    AGGRESSIVE = "aggressive"      # 4% риск на сделку
 
 
 class StrategyName(str, Enum):
@@ -88,10 +87,10 @@ class Settings(BaseSettings):
         params = {
             RiskLevel.CONSERVATIVE: {
                 "risk_per_trade_pct": 1.0,
-                "max_leverage": 3,
+                "max_leverage": 5,
                 "max_open_positions": 2,
-                "stop_loss_pct": 1.5,
-                "take_profit_pct": 3.0,
+                "stop_loss_pct": 2.0,
+                "take_profit_pct": 4.0,
             },
             RiskLevel.MODERATE: {
                 "risk_per_trade_pct": 2.0,
@@ -102,17 +101,10 @@ class Settings(BaseSettings):
             },
             RiskLevel.AGGRESSIVE: {
                 "risk_per_trade_pct": 4.0,
-                "max_leverage": 10,
+                "max_leverage": 5,
                 "max_open_positions": 5,
-                "stop_loss_pct": 3.0,
-                "take_profit_pct": 6.0,
-            },
-            RiskLevel.SWING: {
-                "risk_per_trade_pct": 2.0,
-                "max_leverage": 2,
-                "max_open_positions": 3,
-                "stop_loss_pct": 10.0,
-                "take_profit_pct": 25.0,
+                "stop_loss_pct": 2.0,
+                "take_profit_pct": 4.0,
             },
         }
         return params[self.risk_level]
