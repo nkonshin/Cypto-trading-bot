@@ -86,6 +86,38 @@ class BacktestResult:
         )
 
 
+class TakeProfitMode:
+    """Пресеты частичного тейк-профита."""
+
+    FULL = "full"               # 100% на TP (классический)
+    HALF_AND_TRAIL = "half"     # 50% на TP1 (50% TP), остаток trailing до TP2
+    THIRDS = "thirds"           # 33% на TP1, 33% на TP2, 34% trailing
+    SCALP = "scalp"             # 75% на TP1 (быстрая фиксация), 25% trailing
+
+    PRESETS = {
+        "full": {
+            "label": "Полный TP",
+            "description": "100% позиции закрывается на TP",
+            "levels": [(1.0, 1.0)],  # (% от TP, % позиции)
+        },
+        "half": {
+            "label": "50/50 + trailing",
+            "description": "50% на половине TP, остаток с trailing до полного TP",
+            "levels": [(0.5, 0.5), (1.0, 0.5)],
+        },
+        "thirds": {
+            "label": "По третям",
+            "description": "33% на 1/3 TP, 33% на 2/3, 34% на полном TP",
+            "levels": [(0.33, 0.33), (0.66, 0.33), (1.0, 0.34)],
+        },
+        "scalp": {
+            "label": "Быстрая фиксация",
+            "description": "75% на 40% TP, остаток до полного TP",
+            "levels": [(0.4, 0.75), (1.0, 0.25)],
+        },
+    }
+
+
 class Backtester:
     """Движок бэктестинга."""
 
@@ -99,6 +131,7 @@ class Backtester:
         slippage_pct: float = 0.05,
         stop_loss_pct: float = 2.0,
         take_profit_pct: float = 4.0,
+        tp_mode: str = "full",
     ):
         self.strategy = strategy
         self.initial_balance = initial_balance
@@ -108,6 +141,8 @@ class Backtester:
         self.slippage_pct = slippage_pct / 100
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
+        self.tp_mode = tp_mode
+        self.tp_levels = TakeProfitMode.PRESETS.get(tp_mode, TakeProfitMode.PRESETS["full"])["levels"]
 
     def run(self, ohlcv_data: list, symbol: str = "BTC/USDT") -> BacktestResult:
         """
@@ -168,45 +203,118 @@ class Backtester:
                 sl_pct = self.stop_loss_pct / 100
                 tp_pct = self.take_profit_pct / 100
 
+                # Трекинг уровней частичного TP
+                if not hasattr(open_trade, '_tp_level_idx'):
+                    open_trade._tp_level_idx = 0
+                    open_trade._remaining_pct = 1.0  # 100% позиции осталось
+                    open_trade._sl_moved_to_be = False  # SL перенесён в безубыток
+
                 if open_trade.side == "buy":
-                    sl_price = open_trade.entry_price * (1 - sl_pct)
-                    tp_price = open_trade.entry_price * (1 + tp_pct)
+                    # SL: фиксированный или безубыток (если частичный TP сработал)
+                    if open_trade._sl_moved_to_be:
+                        sl_price = open_trade.entry_price * (1 + 0.001)  # чуть выше входа
+                    else:
+                        sl_price = open_trade.entry_price * (1 - sl_pct)
 
                     if current["low"] <= sl_price:
                         open_trade = self._close_trade(
-                            open_trade, sl_price, i, balance, "Стоп-лосс", df
+                            open_trade, sl_price, i, balance,
+                            "Безубыток" if open_trade._sl_moved_to_be else "Стоп-лосс", df
                         )
+                        # PnL уже учтён только по оставшейся части
+                        open_trade.pnl *= open_trade._remaining_pct
+                        open_trade.pnl_pct *= open_trade._remaining_pct
                         balance += open_trade.pnl
                         trades.append(open_trade)
                         open_trade = None
 
-                    elif current["high"] >= tp_price:
-                        open_trade = self._close_trade(
-                            open_trade, tp_price, i, balance, "Тейк-профит", df
-                        )
-                        balance += open_trade.pnl
-                        trades.append(open_trade)
-                        open_trade = None
+                    else:
+                        # Проверяем уровни частичного TP
+                        while (open_trade and
+                               open_trade._tp_level_idx < len(self.tp_levels)):
+                            level_tp_frac, level_close_frac = self.tp_levels[open_trade._tp_level_idx]
+                            level_tp_price = open_trade.entry_price * (1 + tp_pct * level_tp_frac)
+
+                            if current["high"] >= level_tp_price:
+                                partial_pnl = self._calc_partial_pnl(
+                                    open_trade, level_tp_price, level_close_frac
+                                )
+                                balance += partial_pnl
+                                open_trade._remaining_pct -= level_close_frac
+                                open_trade._tp_level_idx += 1
+
+                                # После первого частичного TP — SL в безубыток
+                                if not open_trade._sl_moved_to_be and open_trade._tp_level_idx > 0:
+                                    open_trade._sl_moved_to_be = True
+
+                                logger.info(
+                                    f"  [{self.strategy.name}] ЧАСТИЧНЫЙ TP: "
+                                    f"{level_close_frac:.0%} @ {level_tp_price:.2f} | "
+                                    f"+{partial_pnl:.2f} | Осталось: {open_trade._remaining_pct:.0%}"
+                                )
+
+                                # Если закрыли всё
+                                if open_trade._remaining_pct <= 0.01:
+                                    open_trade = self._close_trade(
+                                        open_trade, level_tp_price, i, balance, "Тейк-профит (полный)", df
+                                    )
+                                    open_trade.pnl = 0  # PnL уже учтён по частям
+                                    trades.append(open_trade)
+                                    open_trade = None
+                                    break
+                            else:
+                                break
 
                 elif open_trade.side == "sell":
-                    sl_price = open_trade.entry_price * (1 + sl_pct)
-                    tp_price = open_trade.entry_price * (1 - tp_pct)
+                    if open_trade._sl_moved_to_be:
+                        sl_price = open_trade.entry_price * (1 - 0.001)
+                    else:
+                        sl_price = open_trade.entry_price * (1 + sl_pct)
 
                     if current["high"] >= sl_price:
                         open_trade = self._close_trade(
-                            open_trade, sl_price, i, balance, "Стоп-лосс", df
+                            open_trade, sl_price, i, balance,
+                            "Безубыток" if open_trade._sl_moved_to_be else "Стоп-лосс", df
                         )
+                        open_trade.pnl *= open_trade._remaining_pct
+                        open_trade.pnl_pct *= open_trade._remaining_pct
                         balance += open_trade.pnl
                         trades.append(open_trade)
                         open_trade = None
 
-                    elif current["low"] <= tp_price:
-                        open_trade = self._close_trade(
-                            open_trade, tp_price, i, balance, "Тейк-профит", df
-                        )
-                        balance += open_trade.pnl
-                        trades.append(open_trade)
-                        open_trade = None
+                    else:
+                        while (open_trade and
+                               open_trade._tp_level_idx < len(self.tp_levels)):
+                            level_tp_frac, level_close_frac = self.tp_levels[open_trade._tp_level_idx]
+                            level_tp_price = open_trade.entry_price * (1 - tp_pct * level_tp_frac)
+
+                            if current["low"] <= level_tp_price:
+                                partial_pnl = self._calc_partial_pnl(
+                                    open_trade, level_tp_price, level_close_frac
+                                )
+                                balance += partial_pnl
+                                open_trade._remaining_pct -= level_close_frac
+                                open_trade._tp_level_idx += 1
+
+                                if not open_trade._sl_moved_to_be and open_trade._tp_level_idx > 0:
+                                    open_trade._sl_moved_to_be = True
+
+                                logger.info(
+                                    f"  [{self.strategy.name}] ЧАСТИЧНЫЙ TP: "
+                                    f"{level_close_frac:.0%} @ {level_tp_price:.2f} | "
+                                    f"+{partial_pnl:.2f} | Осталось: {open_trade._remaining_pct:.0%}"
+                                )
+
+                                if open_trade._remaining_pct <= 0.01:
+                                    open_trade = self._close_trade(
+                                        open_trade, level_tp_price, i, balance, "Тейк-профит (полный)", df
+                                    )
+                                    open_trade.pnl = 0
+                                    trades.append(open_trade)
+                                    open_trade = None
+                                    break
+                            else:
+                                break
 
             # Получаем сигнал стратегии
             if has_precompute:
@@ -306,6 +414,17 @@ class Backtester:
             trades, equity_curve, balance, max_drawdown,
             max_consecutive_losses, symbol, df,
         )
+
+    def _calc_partial_pnl(self, trade: BacktestTrade, exit_price: float,
+                          close_fraction: float) -> float:
+        """Рассчитывает PnL для частичного закрытия."""
+        partial_amount = trade.amount * close_fraction
+        if trade.side == "buy":
+            pnl_raw = (exit_price - trade.entry_price) * partial_amount
+        else:
+            pnl_raw = (trade.entry_price - exit_price) * partial_amount
+        commission = partial_amount * exit_price * self.commission_pct
+        return pnl_raw - commission
 
     def _close_trade(self, trade: BacktestTrade, exit_price: float,
                      exit_idx: int, balance: float, reason: str,
