@@ -34,6 +34,7 @@ class BacktestTrade:
     leverage: int = 1
     custom_sl_pct: Optional[float] = None
     custom_tp_pct: Optional[float] = None
+    partial_pnl: float = 0  # накопленный PnL от частичных TP
 
 
 @dataclass
@@ -240,10 +241,10 @@ class Backtester:
                                     open_trade, level_tp_price, level_close_frac
                                 )
                                 balance += partial_pnl
+                                open_trade.partial_pnl += partial_pnl
                                 open_trade._remaining_pct -= level_close_frac
                                 open_trade._tp_level_idx += 1
 
-                                # После первого частичного TP — SL в безубыток
                                 if not open_trade._sl_moved_to_be and open_trade._tp_level_idx > 0:
                                     open_trade._sl_moved_to_be = True
 
@@ -253,12 +254,13 @@ class Backtester:
                                     f"+{partial_pnl:.2f} | Осталось: {open_trade._remaining_pct:.0%}"
                                 )
 
-                                # Если закрыли всё
                                 if open_trade._remaining_pct <= 0.01:
                                     open_trade = self._close_trade(
                                         open_trade, level_tp_price, i, balance, "Тейк-профит (полный)", df
                                     )
-                                    open_trade.pnl = 0  # PnL уже учтён по частям
+                                    open_trade.pnl = open_trade.partial_pnl
+                                    entry_cost = open_trade.amount * open_trade.entry_price / self.leverage
+                                    open_trade.pnl_pct = (open_trade.pnl / entry_cost * 100) if entry_cost > 0 else 0
                                     trades.append(open_trade)
                                     open_trade = None
                                     break
@@ -393,12 +395,7 @@ class Backtester:
             if dd > max_drawdown:
                 max_drawdown = dd
 
-            # Трекинг серии убытков
-            if trades and trades[-1].pnl < 0:
-                consecutive_losses += 1
-                max_consecutive_losses = max(max_consecutive_losses, consecutive_losses)
-            elif trades and trades[-1].pnl >= 0:
-                consecutive_losses = 0
+            # (серия убытков считается в _calculate_results)
 
         # Закрываем оставшуюся позицию
         if open_trade:
@@ -464,8 +461,25 @@ class Backtester:
         max_consecutive_losses: int, symbol: str, df: pd.DataFrame,
     ) -> BacktestResult:
         """Рассчитывает итоговую статистику."""
+        # Учитываем partial_pnl для сделок с PnL=0
+        for t in trades:
+            if t.pnl == 0 and t.partial_pnl != 0:
+                t.pnl = t.partial_pnl
+                entry_cost = t.amount * t.entry_price / (t.leverage or 1)
+                t.pnl_pct = (t.pnl / entry_cost * 100) if entry_cost > 0 else 0
+
         winning = [t for t in trades if t.pnl > 0]
         losing = [t for t in trades if t.pnl < 0]
+
+        # Считаем серию убытков по сделкам (не по свечкам)
+        consecutive_losses = 0
+        max_consecutive_losses = 0
+        for t in trades:
+            if t.pnl < 0:
+                consecutive_losses += 1
+                max_consecutive_losses = max(max_consecutive_losses, consecutive_losses)
+            else:
+                consecutive_losses = 0
 
         total_profit = sum(t.pnl for t in winning)
         total_loss = abs(sum(t.pnl for t in losing))

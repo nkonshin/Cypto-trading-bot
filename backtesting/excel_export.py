@@ -9,9 +9,38 @@ from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
+from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
 from backtesting.backtest import BacktestResult
+
+# Описания метрик для комментариев в ячейках
+METRIC_TOOLTIPS = {
+    "Win Rate": "Процент прибыльных сделок от общего числа.\n>50% — хороший показатель для большинства стратегий.",
+    "PnL (USDT)": "Profit and Loss — общая прибыль или убыток в USDT.",
+    "PnL (%)": "Прибыль/убыток в процентах от начального баланса.",
+    "Просадка (%)": "Максимальное падение баланса от пикового значения.\nПоказывает наихудший период. <10% — отлично, <20% — приемлемо.",
+    "Профит-фактор": "Сумма прибыльных сделок / сумма убыточных.\n>1 — прибыльно, >1.5 — хорошо, >2 — отлично.",
+    "Sharpe Ratio": "Доходность с учётом риска.\n>0.5 — приемлемо, >1 — хорошо, >2 — отлично.\nУчитывает волатильность доходности.",
+    "Лучшая сделка": "Максимальная прибыль по одной сделке в USDT.",
+    "Худшая сделка": "Максимальный убыток по одной сделке в USDT.",
+    "Убытков подряд": "Максимальное количество убыточных сделок подряд.\nПоказывает устойчивость стратегии к серии неудач.",
+    "Сделок": "Общее количество завершённых сделок за период.",
+    "Направление": "Покупка (лонг) — ставка на рост цены.\nПродажа (шорт) — ставка на падение.",
+    "Stop Loss": "Цена автоматического закрытия при убытке.\nЗащищает от больших потерь.",
+    "Take Profit": "Цена автоматического закрытия при прибыли.\nФиксирует прибыль.",
+    "Плечо": "Кредитное плечо. 5x = позиция в 5 раз больше вложенных средств.\nУвеличивает и прибыль, и убыток.",
+    "R:R": "Risk/Reward — соотношение риска к потенциальной прибыли.\n1:2 значит TP в 2 раза дальше SL.",
+    "Результат": "Прибыль — сделка закрыта с плюсом.\nУбыток — закрыта с минусом.\nБезубыток — около нуля.",
+}
+
+
+def _add_header_comments(ws, headers, row=1):
+    """Добавляет комментарии-подсказки к заголовкам."""
+    for col, header in enumerate(headers, 1):
+        tooltip = METRIC_TOOLTIPS.get(header)
+        if tooltip:
+            ws.cell(row=row, column=col).comment = Comment(tooltip, "Crypto Bot")
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +171,7 @@ def _write_trades_sheet(ws, result: BacktestResult):
     for col, header in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=header)
     _style_header(ws, 1, len(headers))
+    _add_header_comments(ws, headers)
 
     for i, t in enumerate(result.trades, 1):
         row = i + 1
@@ -212,6 +242,7 @@ def _write_comparison_sheet(ws, results: list[BacktestResult]):
     for col, header in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=header)
     _style_header(ws, 1, len(headers))
+    _add_header_comments(ws, headers)
 
     sorted_results = sorted(results, key=lambda r: r.total_pnl_pct, reverse=True)
 
