@@ -37,16 +37,31 @@ OPTIMIZED_PARAMS = {
         },
     },
     "supertrend": {
-        # Hyperopt v2 (new position sizing, 5y, 4h, 150 trials)
-        # +9.9% | WR: 57.1% | 7 trades | DD: 4.0% | PF: 2.52 | Sharpe: 0.47
+        # Hyperopt v3 (profit metric, 5y, 4h, 200 trials)
+        # +104.4% | WR: 45.1% | 113 trades | DD: 19.3% | PF: 1.56
         "strategy_params": {
-            "atr_period": 18,
-            "atr_multiplier": 4.5,
+            "atr_period": 7,
+            "atr_multiplier": 2.0,
             "adx_threshold": 25.0,
         },
         "backtest_params": {
-            "stop_loss_pct": 3.0,
-            "take_profit_pct": 11.5,
+            "stop_loss_pct": 7.0,
+            "take_profit_pct": 3.5,
+        },
+    },
+    "momentum_breakout": {
+        # Hyperopt v1 (profit metric, 5y, 4h, 200 trials)
+        # +402.8% | WR: 42.6% | 329 trades | DD: 21.1% | PF: 1.36
+        "strategy_params": {
+            "channel_period": 15,
+            "atr_period": 18,
+            "atr_sl_mult": 1.0,
+            "rr_ratio": 2.5,
+            "volume_mult": 1.5,
+        },
+        "backtest_params": {
+            "stop_loss_pct": 2.5,
+            "take_profit_pct": 12.0,
         },
     },
     "rsi_mean_reversion": {

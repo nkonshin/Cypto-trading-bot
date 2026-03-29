@@ -165,10 +165,22 @@ def trend_rider_factory(trial: optuna.Trial):
     )
 
 
+def momentum_breakout_factory(trial: optuna.Trial):
+    from strategies.momentum_breakout import MomentumBreakoutStrategy
+    return MomentumBreakoutStrategy(
+        channel_period=trial.suggest_int("channel_period", 10, 60, step=5),
+        atr_period=trial.suggest_int("atr_period", 10, 20),
+        atr_sl_mult=trial.suggest_float("atr_sl_mult", 0.5, 4.0, step=0.5),
+        rr_ratio=trial.suggest_float("rr_ratio", 1.5, 4.0, step=0.5),
+        volume_mult=trial.suggest_float("volume_mult", 0.5, 2.0, step=0.25),
+    )
+
+
 STRATEGY_FACTORIES = {
     "ema_crossover": ema_crossover_factory,
     "rsi_mean_reversion": rsi_mean_reversion_factory,
     "supertrend": supertrend_factory,
     "multi_indicator": multi_indicator_factory,
     "trend_rider": trend_rider_factory,
+    "momentum_breakout": momentum_breakout_factory,
 }

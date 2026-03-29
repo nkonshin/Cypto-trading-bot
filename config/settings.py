@@ -30,6 +30,7 @@ class StrategyName(str, Enum):
     ADAPTIVE = "adaptive"
     MULTI_TF = "multi_tf"
     TREND_RIDER = "trend_rider"
+    MOMENTUM_BREAKOUT = "momentum_breakout"
 
 
 class Settings(BaseSettings):
