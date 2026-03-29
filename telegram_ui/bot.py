@@ -1234,12 +1234,40 @@ class TelegramBot:
                 # График сделок для лучшей стратегии
                 from backtesting.visualizer import plot_trades_on_chart
                 best_result = sorted(results, key=lambda r: r.total_pnl_pct, reverse=True)[0]
-                trades_chart = plot_trades_on_chart(best_result, ohlcv)
-                if trades_chart:
-                    await _send_with_retry(lambda: query.message.reply_photo(
-                        photo=_io2.BytesIO(trades_chart),
-                        caption=f"📈 Сделки лучшей стратегии: {best_result.strategy} ({best_result.total_pnl_pct:+.1f}%)",
-                    ))
+
+                if is_portfolio:
+                    # Для портфеля: прогоняем лучшую стратегию на каждой монете и рисуем графики
+                    best_name = best_result.strategy
+                    for sym in symbols:
+                        if use_optimized:
+                            from backtesting.optimized_params import get_optimized_strategy, OPTIMIZED_PARAMS
+                            s_chart = get_optimized_strategy(best_name)
+                            opt_p = OPTIMIZED_PARAMS.get(best_name, {}).get("backtest_params", {})
+                            chart_sl = opt_p.get("stop_loss_pct", sl_pct)
+                            chart_tp = opt_p.get("take_profit_pct", tp_pct)
+                        else:
+                            s_chart = STRATEGY_MAP[best_name]()
+                            chart_sl, chart_tp = sl_pct, tp_pct
+                        s_chart.timeframe = tf
+                        bt_chart = Backtester(s_chart, self.settings.paper_balance / len(symbols),
+                                              risk_params["risk_per_trade_pct"], leverage,
+                                              stop_loss_pct=chart_sl, take_profit_pct=chart_tp,
+                                              tp_mode=tp_mode)
+                        r_chart = bt_chart.run(ohlcv_map[sym], sym)
+                        chart_bytes = plot_trades_on_chart(r_chart, ohlcv_map[sym])
+                        if chart_bytes:
+                            _sym = sym
+                            await _send_with_retry(lambda: query.message.reply_photo(
+                                photo=_io2.BytesIO(chart_bytes),
+                                caption=f"📈 {best_name} на {_sym} ({r_chart.total_pnl_pct:+.1f}%)",
+                            ))
+                else:
+                    trades_chart = plot_trades_on_chart(best_result, ohlcv)
+                    if trades_chart:
+                        await _send_with_retry(lambda: query.message.reply_photo(
+                            photo=_io2.BytesIO(trades_chart),
+                            caption=f"📈 Сделки лучшей стратегии: {best_result.strategy} ({best_result.total_pnl_pct:+.1f}%)",
+                        ))
 
                 await _send_with_retry(lambda: query.message.reply_text(
                     "Выберите действие:",
