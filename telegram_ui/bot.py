@@ -1011,8 +1011,9 @@ class TelegramBot:
             }
             tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
             # "wf" -- walk-forward: с июля 2024 по сегодня
+            from datetime import datetime as _dt
             if period == "wf":
-                days = (datetime.utcnow() - datetime(2024, 7, 1)).days
+                days = (_dt.utcnow() - _dt(2024, 7, 1)).days
             else:
                 days = period_days.get(period, 30)
 
