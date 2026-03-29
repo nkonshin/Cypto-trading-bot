@@ -81,15 +81,91 @@ OPTIMIZED_PARAMS = {
     },
 }
 
+# Per-coin параметры (walk-forward verified, train 2020-2024, test 2024.07+)
+COIN_OPTIMIZED_PARAMS = {
+    "ETH/USDT": {
+        "momentum_breakout": {
+            # Walk-forward: Train +803%, Test +272% | WR: 38.3% | DD: 32.6%
+            "strategy_params": {
+                "channel_period": 10,
+                "atr_period": 14,
+                "atr_sl_mult": 1.0,
+                "rr_ratio": 3.5,
+                "volume_mult": 1.75,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 8.0,
+                "take_profit_pct": 7.0,
+            },
+        },
+        "supertrend": {
+            # Walk-forward: Train +80%, Test -24%
+            "strategy_params": {
+                "atr_period": 7,
+                "atr_multiplier": 2.0,
+                "adx_threshold": 25.0,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 4.5,
+                "take_profit_pct": 13.0,
+            },
+        },
+        "ema_crossover": {
+            "strategy_params": {
+                "fast_period": 10,
+                "slow_period": 49,
+                "trend_period": 100,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 5.0,
+                "take_profit_pct": 4.0,
+            },
+        },
+    },
+    "SOL/USDT": {
+        "momentum_breakout": {
+            "strategy_params": {
+                "channel_period": 15,
+                "atr_period": 15,
+                "atr_sl_mult": 1.5,
+                "rr_ratio": 2.0,
+                "volume_mult": 1.5,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 5.0,
+                "take_profit_pct": 10.0,
+            },
+        },
+    },
+}
 
-def get_optimized_strategy(name: str):
-    """Создаёт стратегию с оптимизированными параметрами."""
+
+def get_optimized_strategy(name: str, symbol: str = "BTC/USDT"):
+    """Создаёт стратегию с оптимизированными параметрами для конкретной монеты."""
     from strategies import STRATEGY_MAP
 
+    # Сначала проверяем per-coin параметры
+    coin_params = COIN_OPTIMIZED_PARAMS.get(symbol, {}).get(name)
+    if coin_params:
+        cls = STRATEGY_MAP[name]
+        return cls(**coin_params["strategy_params"])
+
+    # Фоллбэк на общие BTC-параметры
     if name not in OPTIMIZED_PARAMS:
-        # Без оптимизации — дефолтные параметры
         return STRATEGY_MAP[name]()
 
     params = OPTIMIZED_PARAMS[name]
     cls = STRATEGY_MAP[name]
     return cls(**params["strategy_params"])
+
+
+def get_optimized_backtest_params(name: str, symbol: str = "BTC/USDT") -> dict:
+    """Возвращает оптимальные SL/TP для стратегии и монеты."""
+    coin_params = COIN_OPTIMIZED_PARAMS.get(symbol, {}).get(name)
+    if coin_params:
+        return coin_params.get("backtest_params", {})
+
+    if name in OPTIMIZED_PARAMS:
+        return OPTIMIZED_PARAMS[name].get("backtest_params", {})
+
+    return {}

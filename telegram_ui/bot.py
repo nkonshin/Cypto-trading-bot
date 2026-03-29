@@ -1093,9 +1093,9 @@ class TelegramBot:
                 for idx, (name, cls) in enumerate(strategy_items):
                     # Оптимизированные или дефолтные параметры
                     if use_optimized:
-                        from backtesting.optimized_params import get_optimized_strategy, OPTIMIZED_PARAMS
-                        strategy = get_optimized_strategy(name)
-                        opt_params = OPTIMIZED_PARAMS.get(name, {}).get("backtest_params", {})
+                        from backtesting.optimized_params import get_optimized_strategy, get_optimized_backtest_params
+                        strategy = get_optimized_strategy(name, symbol)
+                        opt_params = get_optimized_backtest_params(name, symbol)
                         strat_sl = opt_params.get("stop_loss_pct", sl_pct)
                         strat_tp = opt_params.get("take_profit_pct", tp_pct)
                     else:
@@ -1144,19 +1144,25 @@ class TelegramBot:
                         for sym in symbols:
                             s_copy = type(strategy)(**{k: getattr(strategy, k) for k in strategy.__init__.__code__.co_varnames[1:strategy.__init__.__code__.co_argcount] if hasattr(strategy, k)}) if hasattr(strategy.__init__, '__code__') else strategy
                             try:
-                                s_copy = type(strategy)()
                                 if use_optimized:
-                                    from backtesting.optimized_params import get_optimized_strategy, OPTIMIZED_PARAMS
-                                    s_copy = get_optimized_strategy(name)
+                                    from backtesting.optimized_params import get_optimized_strategy, get_optimized_backtest_params
+                                    s_copy = get_optimized_strategy(name, sym)
+                                    sym_bp = get_optimized_backtest_params(name, sym)
+                                    sym_sl = sym_bp.get("stop_loss_pct", strat_sl)
+                                    sym_tp = sym_bp.get("take_profit_pct", strat_tp)
+                                else:
+                                    s_copy = type(strategy)()
+                                    sym_sl, sym_tp = strat_sl, strat_tp
                                 s_copy.timeframe = tf
                             except Exception:
                                 s_copy = strategy
+                                sym_sl, sym_tp = strat_sl, strat_tp
                             bt = Backtester(
                                 strategy=s_copy,
                                 initial_balance=self.settings.paper_balance / len(symbols),
                                 risk_per_trade_pct=risk_params["risk_per_trade_pct"],
                                 leverage=leverage,
-                                stop_loss_pct=strat_sl, take_profit_pct=strat_tp,
+                                stop_loss_pct=sym_sl, take_profit_pct=sym_tp,
                                 tp_mode=tp_mode,
                             )
                             r = bt.run(ohlcv_map[sym], sym)
