@@ -1038,6 +1038,16 @@ class TelegramBot:
                     caption="📋 Подробный отчёт — сравнение + сделки по каждой стратегии",
                 ))
 
+                # График сделок для лучшей стратегии
+                from backtesting.visualizer import plot_trades_on_chart
+                best_result = sorted(results, key=lambda r: r.total_pnl_pct, reverse=True)[0]
+                trades_chart = plot_trades_on_chart(best_result, ohlcv)
+                if trades_chart:
+                    await _send_with_retry(lambda: query.message.reply_photo(
+                        photo=_io2.BytesIO(trades_chart),
+                        caption=f"📈 Сделки лучшей стратегии: {best_result.strategy} ({best_result.total_pnl_pct:+.1f}%)",
+                    ))
+
                 await _send_with_retry(lambda: query.message.reply_text(
                     "Выберите действие:",
                     reply_markup=self._main_menu_keyboard(),

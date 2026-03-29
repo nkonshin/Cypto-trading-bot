@@ -138,7 +138,7 @@ def plot_comparison(results: list[BacktestResult],
                  label=f"{r.strategy} ({r.total_pnl_pct:+.1f}%)")
 
     ax1.axhline(y=100, color="#7f8c8d", linestyle="--", alpha=0.5, linewidth=0.8)
-    ax1.set_title("Equity Curves (нормализованные)", color="white", fontsize=11)
+    ax1.set_title("Динамика баланса", color="white", fontsize=11)
     ax1.set_ylabel("% от начального баланса", color="white", fontsize=9)
     ax1.tick_params(colors="white")
     ax1.grid(True, alpha=0.1, color="white")
@@ -166,40 +166,59 @@ def plot_comparison(results: list[BacktestResult],
     ax2.tick_params(colors="white")
     ax2.grid(True, alpha=0.1, color="white", axis="x")
 
-    # --- 3. Win Rate + Profit Factor ---
+    # --- 3. Сводная таблица метрик ---
     ax3 = axes[1][0]
     ax3.set_facecolor("#16213e")
+    ax3.axis("off")
 
-    x_pos = range(len(results))
-    win_rates = [r.win_rate for r in results]
-    profit_factors = [min(r.profit_factor, 5.0) for r in results]  # cap для визуализации
+    sorted_r = sorted(results, key=lambda r: r.total_pnl_pct, reverse=True)
+    table_data = []
+    row_colors = []
+    for r in sorted_r:
+        table_data.append([
+            r.strategy,
+            f"{r.total_pnl_pct:+.1f}%",
+            f"{r.win_rate:.0f}%",
+            f"{r.max_drawdown_pct:.1f}%",
+            f"{r.profit_factor:.2f}",
+            str(r.total_trades),
+        ])
+        row_colors.append("#1a3a1a" if r.total_pnl > 0 else "#3a1a1a")
 
-    bar_width = 0.35
-    bars1 = ax3.bar([x - bar_width / 2 for x in x_pos], win_rates,
-                    bar_width, color="#3498db", label="Win Rate %", alpha=0.8)
-    ax3_twin = ax3.twinx()
-    bars2 = ax3_twin.bar([x + bar_width / 2 for x in x_pos], profit_factors,
-                         bar_width, color="#f39c12", label="Profit Factor", alpha=0.8)
+    col_labels = ["Стратегия", "PnL", "Win Rate", "Просадка", "PF", "Сделок"]
+    table = ax3.table(
+        cellText=table_data, colLabels=col_labels,
+        loc="center", cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1.0, 1.4)
 
-    ax3.set_xticks(list(x_pos))
-    ax3.set_xticklabels(names, rotation=15, ha="right", color="white", fontsize=8)
-    ax3.set_ylabel("Win Rate %", color="#3498db", fontsize=9)
-    ax3_twin.set_ylabel("Profit Factor", color="#f39c12", fontsize=9)
-    ax3.tick_params(colors="white")
-    ax3_twin.tick_params(colors="white")
-    ax3.set_title("Win Rate & Profit Factor", color="white", fontsize=11)
-    ax3.grid(True, alpha=0.1, color="white", axis="y")
+    # Стилизация
+    for (r, c), cell in table.get_celld().items():
+        cell.set_edgecolor("#2a3a5e")
+        cell.set_text_props(color="white")
+        if r == 0:  # заголовок
+            cell.set_facecolor("#2F5496")
+            cell.set_text_props(color="white", fontweight="bold")
+        else:
+            cell.set_facecolor(row_colors[r - 1])
 
-    lines1, labels1 = ax3.get_legend_handles_labels()
-    lines2, labels2 = ax3_twin.get_legend_handles_labels()
-    ax3.legend(lines1 + lines2, labels1 + labels2, loc="upper right",
-               facecolor="#16213e", edgecolor="#7f8c8d", labelcolor="white", fontsize=8)
+    ax3.set_title("Сводка", color="white", fontsize=11)
 
-    # --- 4. Drawdowns ---
+    # --- 4. Просадки (area fill) ---
     ax4 = axes[1][1]
     ax4.set_facecolor("#16213e")
 
-    for i, r in enumerate(results):
+    # Берём топ-3 + худшую для читаемости
+    sorted_by_pnl = sorted(results, key=lambda r: r.total_pnl_pct, reverse=True)
+    show_results = sorted_by_pnl[:3]
+    if len(sorted_by_pnl) > 3:
+        worst = sorted_by_pnl[-1]
+        if worst not in show_results:
+            show_results.append(worst)
+
+    for i, r in enumerate(show_results):
         color = COLORS[i % len(COLORS)]
         peak = r.initial_balance
         drawdowns = []
@@ -208,9 +227,12 @@ def plot_comparison(results: list[BacktestResult],
                 peak = eq
             dd = (peak - eq) / peak * 100 if peak > 0 else 0
             drawdowns.append(-dd)
-        ax4.plot(drawdowns, color=color, linewidth=1, alpha=0.8, label=r.strategy)
+        ax4.fill_between(range(len(drawdowns)), 0, drawdowns,
+                         alpha=0.2, color=color)
+        ax4.plot(drawdowns, color=color, linewidth=1.2, alpha=0.9,
+                 label=f"{r.strategy} ({r.max_drawdown_pct:.1f}%)")
 
-    ax4.set_title("Просадки", color="white", fontsize=11)
+    ax4.set_title("Просадки (топ-3 + худшая)", color="white", fontsize=11)
     ax4.set_ylabel("Drawdown (%)", color="white", fontsize=9)
     ax4.set_xlabel("Свечи", color="white", fontsize=9)
     ax4.tick_params(colors="white")
@@ -225,6 +247,133 @@ def plot_comparison(results: list[BacktestResult],
                     facecolor=fig.get_facecolor())
         plt.close(fig)
         logger.info(f"Сравнительный график сохранён: {save_path}")
+        return None
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                facecolor=fig.get_facecolor())
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def plot_trades_on_chart(result: BacktestResult, ohlcv_data: list,
+                         save_path: Optional[str] = None) -> Optional[bytes]:
+    """
+    Рисует график цены с точками входа/выхода для одной стратегии.
+    Зелёные треугольники вверх = BUY, красные вниз = SELL.
+    Линии SL (красные пунктир) и TP (зелёные пунктир) для каждой сделки.
+    """
+    import pandas as pd
+    from strategies.base import BaseStrategy
+
+    if not result.trades or not ohlcv_data:
+        return None
+
+    df = BaseStrategy.prepare_dataframe(ohlcv_data)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 9), height_ratios=[4, 1],
+                                    gridspec_kw={"hspace": 0.15})
+    fig.patch.set_facecolor("#1a1a2e")
+
+    # --- График цены ---
+    ax1.set_facecolor("#16213e")
+    ax1.plot(df["timestamp"], df["close"], color="#8899aa", linewidth=0.8, alpha=0.9)
+    ax1.fill_between(df["timestamp"], df["low"], df["high"], alpha=0.05, color="white")
+
+    # Точки входа/выхода
+    for t in result.trades:
+        # Находим timestamp входа/выхода
+        entry_ts = None
+        exit_ts = None
+        if t.entry_time:
+            try:
+                entry_ts = pd.Timestamp(t.entry_time)
+            except Exception:
+                pass
+        if t.exit_time:
+            try:
+                exit_ts = pd.Timestamp(t.exit_time)
+            except Exception:
+                pass
+
+        if entry_ts is None:
+            continue
+
+        # Маркер входа
+        if t.side == "buy":
+            ax1.scatter(entry_ts, t.entry_price, marker="^", color="#2ecc71",
+                       s=80, zorder=5, edgecolors="white", linewidth=0.5)
+        else:
+            ax1.scatter(entry_ts, t.entry_price, marker="v", color="#e74c3c",
+                       s=80, zorder=5, edgecolors="white", linewidth=0.5)
+
+        # Маркер выхода
+        if exit_ts:
+            exit_color = "#2ecc71" if t.pnl > 0 else "#e74c3c" if t.pnl < 0 else "#f39c12"
+            ax1.scatter(exit_ts, t.exit_price, marker="x", color=exit_color,
+                       s=60, zorder=5, linewidth=1.5)
+
+            # Линия между входом и выходом
+            line_color = "#2ecc71" if t.pnl > 0 else "#e74c3c"
+            ax1.plot([entry_ts, exit_ts], [t.entry_price, t.exit_price],
+                    color=line_color, linewidth=0.8, alpha=0.4, linestyle="--")
+
+        # SL/TP линии (только если сделка не слишком длинная)
+        if exit_ts and t.stop_loss and t.take_profit:
+            ax1.hlines(t.stop_loss, entry_ts, exit_ts,
+                      colors="#e74c3c", linewidth=0.5, alpha=0.3, linestyles="dotted")
+            ax1.hlines(t.take_profit, entry_ts, exit_ts,
+                      colors="#2ecc71", linewidth=0.5, alpha=0.3, linestyles="dotted")
+
+    ax1.set_title(
+        f"{result.strategy} | {result.symbol} | {result.period} | "
+        f"PnL: {result.total_pnl_pct:+.1f}% | {result.total_trades} сделок",
+        color="white", fontsize=12, fontweight="bold",
+    )
+    ax1.set_ylabel("Цена (USDT)", color="white", fontsize=10)
+    ax1.tick_params(colors="white")
+    ax1.grid(True, alpha=0.1, color="white")
+
+    # Легенда
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker="^", color="w", markerfacecolor="#2ecc71",
+               markersize=10, label="Вход LONG", linestyle="None"),
+        Line2D([0], [0], marker="v", color="w", markerfacecolor="#e74c3c",
+               markersize=10, label="Вход SHORT", linestyle="None"),
+        Line2D([0], [0], marker="x", color="#2ecc71", markersize=8,
+               label="Выход +", linestyle="None", markeredgewidth=2),
+        Line2D([0], [0], marker="x", color="#e74c3c", markersize=8,
+               label="Выход −", linestyle="None", markeredgewidth=2),
+    ]
+    ax1.legend(handles=legend_elements, loc="upper left",
+              facecolor="#16213e", edgecolor="#7f8c8d", labelcolor="white", fontsize=9)
+
+    # --- Equity curve снизу ---
+    ax2.set_facecolor("#16213e")
+    equity = result.equity_curve
+    if equity:
+        eq_x = df["timestamp"][:len(equity)]
+        ax2.fill_between(eq_x, result.initial_balance, equity[:len(eq_x)],
+                        where=[e >= result.initial_balance for e in equity[:len(eq_x)]],
+                        alpha=0.3, color="#2ecc71")
+        ax2.fill_between(eq_x, result.initial_balance, equity[:len(eq_x)],
+                        where=[e < result.initial_balance for e in equity[:len(eq_x)]],
+                        alpha=0.3, color="#e74c3c")
+        ax2.plot(eq_x, equity[:len(eq_x)], color="white", linewidth=1)
+        ax2.axhline(y=result.initial_balance, color="#7f8c8d", linestyle="--",
+                   alpha=0.5, linewidth=0.5)
+    ax2.set_ylabel("Баланс", color="white", fontsize=9)
+    ax2.tick_params(colors="white")
+    ax2.grid(True, alpha=0.1, color="white")
+
+    plt.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight",
+                    facecolor=fig.get_facecolor())
+        plt.close(fig)
         return None
 
     buf = io.BytesIO()
