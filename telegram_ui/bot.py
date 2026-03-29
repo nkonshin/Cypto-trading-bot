@@ -36,8 +36,8 @@ class TelegramBot:
              InlineKeyboardButton("⚙️ Настройки", callback_data="settings")],
             [InlineKeyboardButton("📜 История", callback_data="history"),
              InlineKeyboardButton("🔬 Бэктест", callback_data="backtest_menu")],
-            [InlineKeyboardButton("❓ Справка", callback_data="help"),
-             InlineKeyboardButton("📖 О стратегиях", callback_data="strategies_info")],
+            [InlineKeyboardButton("🎯 Риск", callback_data="show_risk"),
+             InlineKeyboardButton("❓ Справка", callback_data="help")],
             [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -659,6 +659,34 @@ class TelegramBot:
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard),
                                           parse_mode="Markdown")
+
+        elif data == "show_risk":
+            risk_labels = {
+                "conservative": "Conservative (SL 1.5%, TP 3%, 3x)",
+                "moderate": "Moderate (SL 2%, TP 4%, 5x)",
+                "aggressive": "Aggressive (SL 3%, TP 6%, 10x)",
+                "swing": "Swing (SL 10%, TP 25%, 2x)",
+            }
+            keyboard = [
+                [InlineKeyboardButton(
+                    f"{'✅ ' if self.settings.risk_level == level else ''}"
+                    f"{risk_labels.get(level.value, level.value)}",
+                    callback_data=f"set_risk_{level.value}",
+                )]
+                for level in RiskLevel
+            ]
+            keyboard.append(self._back_button())
+            current = self.settings.get_risk_params()
+            await query.edit_message_text(
+                f"🎯 *Уровень риска*\n\n"
+                f"Текущий: `{self.settings.risk_level.value}`\n"
+                f"Риск/сделка: `{current['risk_per_trade_pct']}%`\n"
+                f"Плечо: `{current['max_leverage']}x`\n"
+                f"SL: `{current['stop_loss_pct']}%` | TP: `{current['take_profit_pct']}%`\n\n"
+                f"Влияет на бэктест и сравнение.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
 
         elif data == "history":
             trades = await self.engine.db.get_trades_history(limit=5)
