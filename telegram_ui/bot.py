@@ -749,12 +749,12 @@ class TelegramBot:
             name, tf = parts[0], parts[1]
             tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
             keyboard = [
-                [InlineKeyboardButton("1 мес", callback_data=f"run_backtest_{name}_{tf}_1m"),
-                 InlineKeyboardButton("3 мес", callback_data=f"run_backtest_{name}_{tf}_3m")],
-                [InlineKeyboardButton("6 мес", callback_data=f"run_backtest_{name}_{tf}_6m"),
-                 InlineKeyboardButton("1 год", callback_data=f"run_backtest_{name}_{tf}_1y")],
-                [InlineKeyboardButton("3 года", callback_data=f"run_backtest_{name}_{tf}_3y"),
-                 InlineKeyboardButton("5 лет", callback_data=f"run_backtest_{name}_{tf}_5y")],
+                [InlineKeyboardButton("1 мес", callback_data=f"bt_per_{name}_{tf}_1m"),
+                 InlineKeyboardButton("3 мес", callback_data=f"bt_per_{name}_{tf}_3m")],
+                [InlineKeyboardButton("6 мес", callback_data=f"bt_per_{name}_{tf}_6m"),
+                 InlineKeyboardButton("1 год", callback_data=f"bt_per_{name}_{tf}_1y")],
+                [InlineKeyboardButton("3 года", callback_data=f"bt_per_{name}_{tf}_3y"),
+                 InlineKeyboardButton("5 лет", callback_data=f"bt_per_{name}_{tf}_5y")],
                 [InlineKeyboardButton("◀️ Назад", callback_data=f"bt_strat_{name}")],
             ]
             await query.edit_message_text(
@@ -765,14 +765,39 @@ class TelegramBot:
                 parse_mode="Markdown",
             )
 
+        elif data.startswith("bt_per_"):
+            # Шаг 4: выбор TP-режима
+            parts = data.replace("bt_per_", "").rsplit("_", 2)
+            name, tf, period = parts[0], parts[1], parts[2]
+            tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
+            period_labels = {"1m": "1 мес", "3m": "3 мес", "6m": "6 мес", "1y": "1 год", "3y": "3 года", "5y": "5 лет"}
+            keyboard = [
+                [InlineKeyboardButton("Полный TP", callback_data=f"run_backtest_{name}_{tf}_{period}_full")],
+                [InlineKeyboardButton("50/50 + безубыток", callback_data=f"run_backtest_{name}_{tf}_{period}_half")],
+                [InlineKeyboardButton("По третям", callback_data=f"run_backtest_{name}_{tf}_{period}_thirds")],
+                [InlineKeyboardButton("Быстрая фиксация", callback_data=f"run_backtest_{name}_{tf}_{period}_scalp")],
+                [InlineKeyboardButton("◀️ Назад", callback_data=f"bt_tf_{name}_{tf}")],
+            ]
+            await query.edit_message_text(
+                f"🔬 *Бэктест: {name}*\n"
+                f"ТФ: `{tf_labels.get(tf, tf)}` | Период: `{period_labels.get(period, period)}`\n\n"
+                f"Режим тейк-профита:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
         elif data.startswith("run_backtest_"):
-            parts = data.replace("run_backtest_", "").rsplit("_", 2)
-            if len(parts) == 3:
+            parts = data.replace("run_backtest_", "").rsplit("_", 3)
+            if len(parts) == 4:
+                name, tf, period, tp_mode = parts
+            elif len(parts) == 3:
                 name, tf, period = parts
+                tp_mode = "full"
             else:
                 name = data.replace("run_backtest_", "")
                 tf = None
                 period = None
+                tp_mode = "full"
             period_days = {"1m": 30, "3m": 90, "6m": 180, "1y": 365, "3y": 1095, "5y": 1825}
             period_labels = {"1m": "1 мес", "3m": "3 мес", "6m": "6 мес", "1y": "1 год", "3y": "3 года", "5y": "5 лет"}
             tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
@@ -804,13 +829,19 @@ class TelegramBot:
                     ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe)
 
                 risk_params = self.settings.get_risk_params()
+                # Автоплечо: на длинных ТФ снижаем чтобы стопы не убивали
+                leverage = risk_params["max_leverage"]
+                if tf in ("4h", "1d", "1w") and leverage > 3:
+                    leverage = 3
+
                 bt = Backtester(
                     strategy=strategy,
                     initial_balance=self.settings.paper_balance,
                     risk_per_trade_pct=risk_params["risk_per_trade_pct"],
-                    leverage=risk_params["max_leverage"],
+                    leverage=leverage,
                     stop_loss_pct=risk_params["stop_loss_pct"],
                     take_profit_pct=risk_params["take_profit_pct"],
+                    tp_mode=tp_mode,
                 )
                 result = bt.run(ohlcv, symbol)
                 await query.edit_message_text(
@@ -1008,6 +1039,9 @@ class TelegramBot:
                 leverage = risk_params["max_leverage"]
                 sl_pct = risk_params["stop_loss_pct"]
                 tp_pct = risk_params["take_profit_pct"]
+                # Автоплечо для длинных ТФ
+                if tf in ("4h", "1d", "1w") and leverage > 3:
+                    leverage = 3
 
                 strategy_items = list(STRATEGY_MAP.items())
                 total_strategies = len(strategy_items)
