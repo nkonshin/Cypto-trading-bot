@@ -10,54 +10,58 @@
 
 OPTIMIZED_PARAMS = {
     "ema_crossover": {
-        # Baseline: +2.1% -> Optimized: +26.9% | WR: 69% | 58 trades | DD: 5.9% | PF: 1.96
+        # Hyperopt v2 (new position sizing, 5y, 4h, 150 trials)
+        # +75.4% | WR: 57.7% | 97 trades | DD: 9.7% | PF: 1.72 | Sharpe: 0.29
         "strategy_params": {
-            "fast_period": 9,
-            "slow_period": 45,
-            "trend_period": 250,
+            "fast_period": 14,
+            "slow_period": 49,
+            "trend_period": 100,
         },
         "backtest_params": {
-            "stop_loss_pct": 3.0,
-            "take_profit_pct": 2.5,
+            "stop_loss_pct": 5.5,
+            "take_profit_pct": 7.0,
         },
     },
     "trend_rider": {
-        # Baseline: -18.7% -> Optimized: +18.4% | WR: 34% | 47 trades | DD: 7.7% | PF: 1.34
+        # Hyperopt v2 (new position sizing, 5y, 4h, 150 trials)
+        # +41.8% | WR: 33.3% | 72 trades | DD: 11.4% | PF: 1.34 | Sharpe: 0.15
         "strategy_params": {
-            "ema_fast": 60,
-            "ema_slow": 250,
-            "rsi_period": 11,
-            "volume_mult": 1.8,
+            "ema_fast": 90,
+            "ema_slow": 100,
+            "rsi_period": 13,
+            "volume_mult": 2.0,
         },
         "backtest_params": {
-            "stop_loss_pct": 8.0,
+            "stop_loss_pct": 7.5,
             "take_profit_pct": 16.0,
         },
     },
     "supertrend": {
-        # Baseline: -14.7% -> Optimized: +3.4% | WR: 37.7% | 53 trades | DD: 18.7% | PF: 1.06
+        # Hyperopt v2 (new position sizing, 5y, 4h, 150 trials)
+        # +9.9% | WR: 57.1% | 7 trades | DD: 4.0% | PF: 2.52 | Sharpe: 0.47
         "strategy_params": {
-            "atr_period": 7,
-            "atr_multiplier": 2.25,
+            "atr_period": 18,
+            "atr_multiplier": 4.5,
             "adx_threshold": 25.0,
         },
         "backtest_params": {
-            "stop_loss_pct": 4.5,
-            "take_profit_pct": 13.5,
+            "stop_loss_pct": 3.0,
+            "take_profit_pct": 11.5,
         },
     },
     "rsi_mean_reversion": {
-        # Baseline: -31.6% -> Optimized: +2.1% | WR: 36.2% | 177 trades | DD: 11.7% | PF: 1.02
+        # Hyperopt v2: стратегия убыточна на 4h/5y (-84% лучший результат)
+        # Не рекомендуется для длинных ТФ. Оставлены параметры для коротких периодов.
         "strategy_params": {
-            "rsi_period": 21,
-            "rsi_oversold": 35.0,
-            "rsi_overbought": 80.0,
-            "bb_period": 23,
-            "bb_std": 1.5,
+            "rsi_period": 10,
+            "rsi_oversold": 20.0,
+            "rsi_overbought": 65.0,
+            "bb_period": 15,
+            "bb_std": 1.75,
         },
         "backtest_params": {
-            "stop_loss_pct": 5.5,
-            "take_profit_pct": 16.0,
+            "stop_loss_pct": 3.5,
+            "take_profit_pct": 3.5,
         },
     },
 }
