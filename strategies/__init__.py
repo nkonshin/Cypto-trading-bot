@@ -9,6 +9,7 @@ from strategies.adaptive import AdaptiveStrategy
 from strategies.multi_tf import MultiTimeframeStrategy
 from strategies.trend_rider import TrendRiderStrategy
 from strategies.momentum_breakout import MomentumBreakoutStrategy
+from strategies.regime_switcher import RegimeSwitcherStrategy
 
 STRATEGY_MAP = {
     "ema_crossover": EmaCrossoverStrategy,
@@ -21,6 +22,7 @@ STRATEGY_MAP = {
     "multi_tf": MultiTimeframeStrategy,
     "trend_rider": TrendRiderStrategy,
     "momentum_breakout": MomentumBreakoutStrategy,
+    "regime_switcher": RegimeSwitcherStrategy,
 }
 
 __all__ = [
