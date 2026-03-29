@@ -259,8 +259,8 @@ class Backtester:
                                         open_trade, level_tp_price, i, balance, "Тейк-профит (полный)", df
                                     )
                                     open_trade.pnl = open_trade.partial_pnl
-                                    entry_cost = open_trade.amount * open_trade.entry_price / self.leverage
-                                    open_trade.pnl_pct = (open_trade.pnl / entry_cost * 100) if entry_cost > 0 else 0
+                                    position_value = open_trade.amount * open_trade.entry_price
+                                    open_trade.pnl_pct = (open_trade.pnl / position_value * 100) if position_value > 0 else 0
                                     trades.append(open_trade)
                                     open_trade = None
                                     break
@@ -295,6 +295,7 @@ class Backtester:
                                     open_trade, level_tp_price, level_close_frac
                                 )
                                 balance += partial_pnl
+                                open_trade.partial_pnl += partial_pnl
                                 open_trade._remaining_pct -= level_close_frac
                                 open_trade._tp_level_idx += 1
 
@@ -311,7 +312,9 @@ class Backtester:
                                     open_trade = self._close_trade(
                                         open_trade, level_tp_price, i, balance, "Тейк-профит (полный)", df
                                     )
-                                    open_trade.pnl = 0
+                                    open_trade.pnl = open_trade.partial_pnl
+                                    position_value = open_trade.amount * open_trade.entry_price
+                                    open_trade.pnl_pct = (open_trade.pnl / position_value * 100) if position_value > 0 else 0
                                     trades.append(open_trade)
                                     open_trade = None
                                     break
@@ -469,8 +472,8 @@ class Backtester:
         for t in trades:
             if t.pnl == 0 and t.partial_pnl != 0:
                 t.pnl = t.partial_pnl
-                entry_cost = t.amount * t.entry_price / (t.leverage or 1)
-                t.pnl_pct = (t.pnl / entry_cost * 100) if entry_cost > 0 else 0
+                position_value = t.amount * t.entry_price
+                t.pnl_pct = (t.pnl / position_value * 100) if position_value > 0 else 0
 
         winning = [t for t in trades if t.pnl > 0]
         losing = [t for t in trades if t.pnl < 0]
