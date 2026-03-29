@@ -875,17 +875,37 @@ class TelegramBot:
                                               reply_markup=self._back_keyboard())
 
         elif data == "compare_all":
-            # Шаг 1: выбор таймфрейма
+            # Шаг 0: выбор монеты/портфеля
+            keyboard = [
+                [InlineKeyboardButton("BTC/USDT", callback_data="cmp_coin_BTC-USDT")],
+                [InlineKeyboardButton("ETH/USDT", callback_data="cmp_coin_ETH-USDT")],
+                [InlineKeyboardButton("SOL/USDT", callback_data="cmp_coin_SOL-USDT")],
+                [InlineKeyboardButton("Портфель BTC+ETH (50/50)", callback_data="cmp_coin_PORTFOLIO")],
+                [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+            ]
+            await query.edit_message_text(
+                "📊 *Сравнение стратегий*\n\n"
+                "Шаг 1/5: Выберите монету:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        elif data.startswith("cmp_coin_"):
+            # Шаг 1: сохраняем монету в контекст, выбор таймфрейма
+            coin_key = data.replace("cmp_coin_", "")
+            context.user_data["cmp_coin"] = coin_key
+            coin_label = "Портфель BTC+ETH" if coin_key == "PORTFOLIO" else coin_key.replace("-", "/")
             keyboard = [
                 [InlineKeyboardButton("1h", callback_data="cmp_tf_1h"),
                  InlineKeyboardButton("4h", callback_data="cmp_tf_4h")],
                 [InlineKeyboardButton("1d", callback_data="cmp_tf_1d"),
                  InlineKeyboardButton("1w", callback_data="cmp_tf_1w")],
-                [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],
+                [InlineKeyboardButton("◀️ Назад", callback_data="compare_all")],
             ]
             await query.edit_message_text(
-                "📊 *Сравнение стратегий*\n\n"
-                "Шаг 1/4: Выберите таймфрейм:",
+                f"📊 *Сравнение стратегий*\n\n"
+                f"Монета: `{coin_label}`\n"
+                f"Шаг 2/5: Выберите таймфрейм:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown",
             )
@@ -965,7 +985,14 @@ class TelegramBot:
             tp_mode = parts[2] if len(parts) > 2 else "full"
             use_optimized = parts[3] == "opt" if len(parts) > 3 else False
 
-            # Конвертируем период в дни
+            # Монета из контекста
+            coin_key = context.user_data.get("cmp_coin", "BTC-USDT")
+            is_portfolio = coin_key == "PORTFOLIO"
+            if is_portfolio:
+                symbols = ["BTC/USDT", "ETH/USDT"]
+            else:
+                symbols = [coin_key.replace("-", "/")]
+
             period_days = {
                 "1m": 30, "3m": 90, "6m": 180,
                 "1y": 365, "3y": 1095, "5y": 1825, "8y": 2920,
@@ -1001,10 +1028,8 @@ class TelegramBot:
                 from main import fetch_ohlcv_range, parse_date
                 from datetime import datetime, timedelta
 
-                symbol = self.settings.default_symbol
                 risk_params = self.settings.get_risk_params()
 
-                # Вычисляем даты
                 until_dt = datetime.utcnow()
                 since_dt = until_dt - timedelta(days=days)
                 since_ms = int(since_dt.timestamp() * 1000)
@@ -1012,14 +1037,23 @@ class TelegramBot:
 
                 import time as _time
 
-                # Загружаем данные
+                coin_label = "Портфель BTC+ETH" if is_portfolio else symbols[0]
                 await query.edit_message_text(
                     f"🔬 *Загрузка данных...*\n\n"
+                    f"Монета: `{coin_label}`\n"
                     f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
                     f"Период: `{period_labels.get(period, period)}`",
                     parse_mode="Markdown",
                 )
-                ohlcv = await fetch_ohlcv_range(symbol, tf, since=since_ms, until=until_ms)
+
+                # Загружаем данные для всех монет
+                ohlcv_map = {}
+                for sym in symbols:
+                    ohlcv_map[sym] = await fetch_ohlcv_range(sym, tf, since=since_ms, until=until_ms)
+
+                # Для одиночной монеты -- как раньше
+                symbol = symbols[0]
+                ohlcv = ohlcv_map[symbol]
 
                 if len(ohlcv) < 210:
                     await query.edit_message_text(
@@ -1085,17 +1119,56 @@ class TelegramBot:
                     except Exception:
                         pass
 
-                    bt = Backtester(
-                        strategy=strategy,
-                        initial_balance=self.settings.paper_balance,
-                        risk_per_trade_pct=risk_params["risk_per_trade_pct"],
-                        leverage=leverage,
-                        stop_loss_pct=strat_sl,
-                        take_profit_pct=strat_tp,
-                        tp_mode=tp_mode,
-                    )
-                    result = bt.run(ohlcv, symbol)
-                    results.append(result)
+                    if is_portfolio:
+                        # Портфель: прогоняем на каждой монете, усредняем
+                        portfolio_pnl = 0
+                        portfolio_trades = 0
+                        portfolio_dd = 0
+                        first_result = None
+                        for sym in symbols:
+                            s_copy = type(strategy)(**{k: getattr(strategy, k) for k in strategy.__init__.__code__.co_varnames[1:strategy.__init__.__code__.co_argcount] if hasattr(strategy, k)}) if hasattr(strategy.__init__, '__code__') else strategy
+                            try:
+                                s_copy = type(strategy)()
+                                if use_optimized:
+                                    from backtesting.optimized_params import get_optimized_strategy, OPTIMIZED_PARAMS
+                                    s_copy = get_optimized_strategy(name)
+                                s_copy.timeframe = tf
+                            except Exception:
+                                s_copy = strategy
+                            bt = Backtester(
+                                strategy=s_copy,
+                                initial_balance=self.settings.paper_balance / len(symbols),
+                                risk_per_trade_pct=risk_params["risk_per_trade_pct"],
+                                leverage=leverage,
+                                stop_loss_pct=strat_sl, take_profit_pct=strat_tp,
+                                tp_mode=tp_mode,
+                            )
+                            r = bt.run(ohlcv_map[sym], sym)
+                            portfolio_pnl += r.total_pnl
+                            portfolio_trades += r.total_trades
+                            portfolio_dd = max(portfolio_dd, r.max_drawdown_pct)
+                            if first_result is None:
+                                first_result = r
+                        # Создаём сводный результат
+                        if first_result:
+                            first_result.total_pnl = round(portfolio_pnl, 2)
+                            first_result.total_pnl_pct = round(portfolio_pnl / self.settings.paper_balance * 100, 2)
+                            first_result.total_trades = portfolio_trades
+                            first_result.max_drawdown_pct = portfolio_dd
+                            first_result.symbol = "BTC+ETH"
+                            first_result.strategy = name
+                            results.append(first_result)
+                    else:
+                        bt = Backtester(
+                            strategy=strategy,
+                            initial_balance=self.settings.paper_balance,
+                            risk_per_trade_pct=risk_params["risk_per_trade_pct"],
+                            leverage=leverage,
+                            stop_loss_pct=strat_sl, take_profit_pct=strat_tp,
+                            tp_mode=tp_mode,
+                        )
+                        result = bt.run(ohlcv, symbol)
+                        results.append(result)
 
                 elapsed_total = _time.time() - start_time
                 elapsed_str = f"{int(elapsed_total)}с" if elapsed_total < 60 else f"{int(elapsed_total // 60)}м {int(elapsed_total % 60)}с"
