@@ -291,6 +291,15 @@ class TelegramBot:
                 caption="📋 Подробный отчёт по сделкам",
             )
 
+            # График сделок на BTC
+            from backtesting.visualizer import plot_trades_on_chart
+            trades_chart = plot_trades_on_chart(result, ohlcv)
+            if trades_chart:
+                await update.message.reply_photo(
+                    photo=_io.BytesIO(trades_chart),
+                    caption=f"📈 Сделки {strategy.name} на графике {symbol}",
+                )
+
         except Exception as e:
             logger.error(f"Ошибка бэктеста: {e}", exc_info=True)
             await update.message.reply_text(f"Ошибка бэктеста: {e}")
@@ -761,6 +770,16 @@ class TelegramBot:
                     filename=f"backtest_{name}_{symbol.replace('/', '_')}.xlsx",
                     caption="📋 Подробный отчёт по сделкам",
                 )
+
+                # График сделок на BTC
+                from backtesting.visualizer import plot_trades_on_chart
+                trades_chart = plot_trades_on_chart(result, ohlcv)
+                if trades_chart:
+                    await query.message.reply_photo(
+                        photo=_io2.BytesIO(trades_chart),
+                        caption=f"📈 Сделки {strategy.name} на графике {symbol}",
+                    )
+
                 await query.message.reply_text(
                     "Выберите действие:",
                     reply_markup=self._main_menu_keyboard(),
