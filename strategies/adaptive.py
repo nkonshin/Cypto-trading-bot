@@ -75,8 +75,60 @@ class AdaptiveStrategy(BaseStrategy):
                 pass
         return df
 
-    # analyze_at использует дефолт из BaseStrategy (analyze(df[:idx+1]))
-    # detect_market_phase внутри analyze() пропустит пересчёт если колонки есть
+    def analyze_at(self, df: pd.DataFrame, idx: int, symbol: str) -> Signal:
+        """
+        Быстрый анализ: detect_market_phase на срезе (оригинальная, не упрощённая),
+        но суб-стратегии через быстрый analyze_at (предрассчитанные индикаторы).
+        """
+        if idx < self.min_candles:
+            return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                          reason="Недостаточно данных")
+
+        # Фаза рынка: оригинальная функция на срезе
+        # EMA/ADX уже предрассчитаны в precompute, detect_market_phase пропустит пересчёт
+        phase_result = detect_market_phase(df.iloc[:idx + 1])
+        self._current_phase = phase_result.phase
+
+        strategy_names = PHASE_STRATEGY_MAP[phase_result.phase]
+        best_signal = None
+
+        strategies = self._get_strategies()
+        for name in strategy_names:
+            strategy = strategies.get(name)
+            if not strategy:
+                continue
+            try:
+                # Суб-стратегии через быстрый analyze_at (индикаторы предрассчитаны)
+                signal = strategy.analyze_at(df, idx, symbol)
+            except Exception as e:
+                logger.warning(f"Ошибка в стратегии {name}: {e}")
+                continue
+            if signal.type != SignalType.HOLD:
+                best_signal = signal
+                self._current_strategy_name = name
+                break
+
+        if not best_signal:
+            self._current_strategy_name = None
+            return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                          reason=f"Фаза: {phase_result.phase.value}, нет сигналов",
+                          indicators={"phase": phase_result.phase.value, "adx": phase_result.adx})
+
+        signal_sl = best_signal.custom_sl_pct or 0
+        signal_tp = best_signal.custom_tp_pct or 0
+        final_sl = max(self.sl_pct, signal_sl)
+        final_tp = max(self.tp_pct, signal_tp)
+        if final_sl > 0 and final_tp / final_sl < self.min_rr_ratio:
+            final_tp = final_sl * self.min_rr_ratio
+
+        return Signal(
+            type=best_signal.type, strength=best_signal.strength, price=best_signal.price,
+            symbol=symbol, strategy=self.name,
+            reason=f"[{phase_result.phase.value}|{self._current_strategy_name}] {best_signal.reason}",
+            indicators={**best_signal.indicators, "phase": phase_result.phase.value,
+                        "sub_strategy": self._current_strategy_name},
+            custom_sl_pct=final_sl, custom_tp_pct=final_tp,
+        )
 
     @property
     def current_phase(self) -> str:

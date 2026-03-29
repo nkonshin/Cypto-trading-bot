@@ -100,6 +100,66 @@ class MultiTimeframeStrategy(BaseStrategy):
                 pass
         return df
 
+    def analyze_at(self, df: pd.DataFrame, idx: int, symbol: str) -> Signal:
+        """
+        Быстрый анализ: ресэмпл на срезе для фазы (оригинальная detect_market_phase),
+        суб-стратегии через быстрый analyze_at.
+        """
+        if idx < self.min_candles:
+            return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                          reason="Недостаточно данных")
+
+        # Ресэмплируем в старший ТФ для фазы
+        htf_df = resample_to_higher_tf(df.iloc[:idx + 1], self.higher_tf)
+        if len(htf_df) < 200:
+            htf_df = df.iloc[:idx + 1]
+
+        phase_result = detect_market_phase(htf_df)
+
+        allowed = {
+            MarketPhase.BULLISH: {SignalType.BUY},
+            MarketPhase.BEARISH: {SignalType.SELL},
+            MarketPhase.SIDEWAYS: {SignalType.BUY, SignalType.SELL},
+        }[phase_result.phase]
+
+        strategy_names = PHASE_STRATEGY_MAP[phase_result.phase]
+        strategies = self._get_strategies()
+        best_signal = None
+        best_strategy_name = None
+
+        for name in strategy_names:
+            strategy = strategies.get(name)
+            if not strategy:
+                continue
+            try:
+                signal = strategy.analyze_at(df, idx, symbol)
+            except Exception:
+                continue
+            if signal.type in allowed:
+                best_signal = signal
+                best_strategy_name = name
+                break
+
+        if not best_signal:
+            return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                          reason=f"[{self.higher_tf}:{phase_result.phase.value}] Нет сигналов")
+
+        signal_sl = best_signal.custom_sl_pct or 0
+        signal_tp = best_signal.custom_tp_pct or 0
+        final_sl = max(self.sl_pct, signal_sl)
+        final_tp = max(self.tp_pct, signal_tp)
+        if final_sl > 0 and final_tp / final_sl < self.min_rr_ratio:
+            final_tp = final_sl * self.min_rr_ratio
+
+        return Signal(
+            type=best_signal.type, strength=best_signal.strength, price=best_signal.price,
+            symbol=symbol, strategy=self.name,
+            reason=f"[{self.higher_tf}:{phase_result.phase.value}|{best_strategy_name}] {best_signal.reason}",
+            indicators={**best_signal.indicators, "htf": self.higher_tf,
+                        "phase": phase_result.phase.value, "sub_strategy": best_strategy_name},
+            custom_sl_pct=final_sl, custom_tp_pct=final_tp,
+        )
+
     def analyze(self, df: pd.DataFrame, symbol: str) -> Signal:
         if len(df) < self.min_candles:
             return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
