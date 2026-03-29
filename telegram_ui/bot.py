@@ -881,8 +881,10 @@ class TelegramBot:
         elif data == "compare_all":
             # Шаг 0: выбор монеты/портфеля
             keyboard = [
-                [InlineKeyboardButton("BTC/USDT", callback_data="cmp_coin_BTC-USDT")],
-                [InlineKeyboardButton("ETH/USDT", callback_data="cmp_coin_ETH-USDT")],
+                [InlineKeyboardButton("BTC/USDT", callback_data="cmp_coin_BTC-USDT"),
+                 InlineKeyboardButton("ETH/USDT", callback_data="cmp_coin_ETH-USDT")],
+                [InlineKeyboardButton("XRP/USDT", callback_data="cmp_coin_XRP-USDT"),
+                 InlineKeyboardButton("DOGE/USDT", callback_data="cmp_coin_DOGE-USDT")],
                 [InlineKeyboardButton("SOL/USDT", callback_data="cmp_coin_SOL-USDT")],
                 [InlineKeyboardButton("Портфель BTC+ETH (50/50)", callback_data="cmp_coin_PORTFOLIO")],
                 [InlineKeyboardButton("◀️ Назад", callback_data="back_main")],

@@ -98,6 +98,20 @@ COIN_OPTIMIZED_PARAMS = {
                 "take_profit_pct": 7.0,
             },
         },
+        "bb_squeeze": {
+            # Walk-forward: Train +124%, Test +109.2% | WR: 40.7% | DD: 23.7%
+            "strategy_params": {
+                "bb_period": 19,
+                "bb_std": 1.75,
+                "squeeze_threshold": 0.02,
+                "kc_mult": 2.25,
+                "atr_period": 20,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 6.0,
+                "take_profit_pct": 15.0,
+            },
+        },
         "supertrend": {
             # Walk-forward: Train +80%, Test -24%
             "strategy_params": {
@@ -134,6 +148,38 @@ COIN_OPTIMIZED_PARAMS = {
             "backtest_params": {
                 "stop_loss_pct": 5.0,
                 "take_profit_pct": 10.0,
+            },
+        },
+    },
+    "XRP/USDT": {
+        "momentum_breakout": {
+            # Walk-forward: Train +79%, Test +152.8% | WR: 36.2% | DD: 27.6%
+            "strategy_params": {
+                "channel_period": 45,
+                "atr_period": 15,
+                "atr_sl_mult": 3.5,
+                "rr_ratio": 4.0,
+                "volume_mult": 0.5,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 5.5,
+                "take_profit_pct": 2.0,
+            },
+        },
+    },
+    "DOGE/USDT": {
+        "momentum_breakout": {
+            # Walk-forward: Train +229%, Test +46.8% | WR: 39.0% | DD: 17.8%
+            "strategy_params": {
+                "channel_period": 40,
+                "atr_period": 20,
+                "atr_sl_mult": 1.0,
+                "rr_ratio": 2.0,
+                "volume_mult": 1.75,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 6.0,
+                "take_profit_pct": 7.5,
             },
         },
     },
