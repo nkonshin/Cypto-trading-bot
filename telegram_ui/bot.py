@@ -744,6 +744,7 @@ class TelegramBot:
             name, tf = parts[0], parts[1]
             tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
             keyboard = [
+                [InlineKeyboardButton("С июля 2024 (честный)", callback_data=f"bt_per_{name}_{tf}_wf")],
                 [InlineKeyboardButton("1 мес", callback_data=f"bt_per_{name}_{tf}_1m"),
                  InlineKeyboardButton("3 мес", callback_data=f"bt_per_{name}_{tf}_3m")],
                 [InlineKeyboardButton("6 мес", callback_data=f"bt_per_{name}_{tf}_6m"),
@@ -793,8 +794,8 @@ class TelegramBot:
                 tf = None
                 period = None
                 tp_mode = "full"
-            period_days = {"1m": 30, "3m": 90, "6m": 180, "1y": 365, "3y": 1095, "5y": 1825}
-            period_labels = {"1m": "1 мес", "3m": "3 мес", "6m": "6 мес", "1y": "1 год", "3y": "3 года", "5y": "5 лет"}
+            period_days = {"1m": 30, "3m": 90, "6m": 180, "1y": 365, "3y": 1095, "5y": 1825, "wf": 0}
+            period_labels = {"1m": "1 мес", "3m": "3 мес", "6m": "6 мес", "1y": "1 год", "3y": "3 года", "5y": "5 лет", "wf": "С июля 2024"}
             tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
 
             await query.edit_message_text(
@@ -816,7 +817,10 @@ class TelegramBot:
 
                 if period and period in period_days:
                     until_dt = datetime.utcnow()
-                    since_dt = until_dt - timedelta(days=period_days[period])
+                    if period == "wf":
+                        since_dt = datetime(2024, 7, 1)
+                    else:
+                        since_dt = until_dt - timedelta(days=period_days[period])
                     since_ms = int(since_dt.timestamp() * 1000)
                     until_ms = int(until_dt.timestamp() * 1000)
                     ohlcv = await fetch_ohlcv_range(symbol, strategy.timeframe, since=since_ms, until=until_ms)
@@ -914,6 +918,7 @@ class TelegramBot:
             # Шаг 2: выбор периода
             tf = data.replace("cmp_tf_", "")
             keyboard = [
+                [InlineKeyboardButton("С июля 2024 (честный тест)", callback_data=f"cmp_per_{tf}_wf")],
                 [InlineKeyboardButton("1 мес", callback_data=f"cmp_per_{tf}_1m"),
                  InlineKeyboardButton("3 мес", callback_data=f"cmp_per_{tf}_3m")],
                 [InlineKeyboardButton("6 мес", callback_data=f"cmp_per_{tf}_6m"),
@@ -927,7 +932,9 @@ class TelegramBot:
             await query.edit_message_text(
                 f"📊 *Сравнение стратегий*\n\n"
                 f"Таймфрейм: `{tf_labels.get(tf, tf)}`\n"
-                f"Шаг 2/4: Выберите период:",
+                f"Шаг 3/5: Выберите период:\n\n"
+                f"Параметры Hyperopt обучены на 2020-2024.\n"
+                f"Для честного теста выбирайте 'С июля 2024'.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown",
             )
@@ -1000,9 +1007,14 @@ class TelegramBot:
             period_labels = {
                 "1m": "1 месяц", "3m": "3 месяца", "6m": "6 месяцев",
                 "1y": "1 год", "3y": "3 года", "5y": "5 лет", "8y": "8 лет",
+                "wf": "С июля 2024 (честный тест)",
             }
             tf_labels = {"1h": "1 час", "4h": "4 часа", "1d": "1 день", "1w": "1 неделя"}
-            days = period_days.get(period, 30)
+            # "wf" -- walk-forward: с июля 2024 по сегодня
+            if period == "wf":
+                days = (datetime.utcnow() - datetime(2024, 7, 1)).days
+            else:
+                days = period_days.get(period, 30)
 
             # Оценка времени
             candles_estimate = {
@@ -1031,7 +1043,10 @@ class TelegramBot:
                 risk_params = self.settings.get_risk_params()
 
                 until_dt = datetime.utcnow()
-                since_dt = until_dt - timedelta(days=days)
+                if period == "wf":
+                    since_dt = datetime(2024, 7, 1)
+                else:
+                    since_dt = until_dt - timedelta(days=days)
                 since_ms = int(since_dt.timestamp() * 1000)
                 until_ms = int(until_dt.timestamp() * 1000)
 
