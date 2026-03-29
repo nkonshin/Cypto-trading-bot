@@ -84,6 +84,22 @@ class MultiTimeframeStrategy(BaseStrategy):
             }
         return self._strategies
 
+    def precompute(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Предрассчитывает индикаторы для detect_market_phase и суб-стратегий."""
+        df = df.copy()
+        if "ema50" not in df.columns:
+            df["ema50"] = ta.trend.ema_indicator(df["close"], window=50)
+        if "ema200" not in df.columns:
+            df["ema200"] = ta.trend.ema_indicator(df["close"], window=200)
+        if "adx" not in df.columns:
+            df["adx"] = ta.trend.adx(df["high"], df["low"], df["close"], window=14)
+        for strategy in self._get_strategies().values():
+            try:
+                df = strategy.precompute(df)
+            except Exception:
+                pass
+        return df
+
     def analyze(self, df: pd.DataFrame, symbol: str) -> Signal:
         if len(df) < self.min_candles:
             return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,

@@ -57,6 +57,27 @@ class AdaptiveStrategy(BaseStrategy):
             }
         return self._strategies
 
+    def precompute(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Предрассчитывает индикаторы для detect_market_phase и суб-стратегий."""
+        import ta
+        df = df.copy()
+        if "ema50" not in df.columns:
+            df["ema50"] = ta.trend.ema_indicator(df["close"], window=50)
+        if "ema200" not in df.columns:
+            df["ema200"] = ta.trend.ema_indicator(df["close"], window=200)
+        if "adx" not in df.columns:
+            df["adx"] = ta.trend.adx(df["high"], df["low"], df["close"], window=14)
+        # Предрассчитываем индикаторы суб-стратегий
+        for strategy in self._get_strategies().values():
+            try:
+                df = strategy.precompute(df)
+            except Exception:
+                pass
+        return df
+
+    # analyze_at использует дефолт из BaseStrategy (analyze(df[:idx+1]))
+    # detect_market_phase внутри analyze() пропустит пересчёт если колонки есть
+
     @property
     def current_phase(self) -> str:
         return self._current_phase.value if self._current_phase else "unknown"

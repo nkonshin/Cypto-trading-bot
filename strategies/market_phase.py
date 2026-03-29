@@ -59,12 +59,13 @@ def detect_market_phase(df: pd.DataFrame, lookback: int = 50) -> PhaseResult:
             reason="Недостаточно данных (нужно 200+ свечей)",
         )
 
-    df = df.copy()
-
-    # Индикаторы
-    df["ema50"] = ta.trend.ema_indicator(df["close"], window=50)
-    df["ema200"] = ta.trend.ema_indicator(df["close"], window=200)
-    df["adx"] = ta.trend.adx(df["high"], df["low"], df["close"], window=14)
+    # Используем предрассчитанные индикаторы если они уже есть
+    needs_compute = "ema50" not in df.columns or "ema200" not in df.columns or "adx" not in df.columns
+    if needs_compute:
+        df = df.copy()
+        df["ema50"] = ta.trend.ema_indicator(df["close"], window=50)
+        df["ema200"] = ta.trend.ema_indicator(df["close"], window=200)
+        df["adx"] = ta.trend.adx(df["high"], df["low"], df["close"], window=14)
 
     last = df.iloc[-1]
     price = last["close"]
