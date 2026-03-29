@@ -343,16 +343,20 @@ def plot_trades_on_chart(result: BacktestResult, ohlcv_data: list,
         Line2D([0], [0], marker="v", color="w", markerfacecolor="#e74c3c",
                markersize=10, label="Вход SHORT", linestyle="None"),
         Line2D([0], [0], marker="x", color="#2ecc71", markersize=8,
-               label="Выход +", linestyle="None", markeredgewidth=2),
+               label="Выход в +", linestyle="None", markeredgewidth=2),
         Line2D([0], [0], marker="x", color="#e74c3c", markersize=8,
-               label="Выход −", linestyle="None", markeredgewidth=2),
+               label="Выход в −", linestyle="None", markeredgewidth=2),
+        Line2D([0], [0], marker="x", color="#f39c12", markersize=8,
+               label="Выход в 0 (безубыток)", linestyle="None", markeredgewidth=2),
     ]
     ax1.legend(handles=legend_elements, loc="upper left",
               facecolor="#16213e", edgecolor="#7f8c8d", labelcolor="white", fontsize=9)
 
-    # --- Equity curve снизу ---
+    # --- Equity curve снизу (синхронизированная ось X) ---
     ax2.set_facecolor("#16213e")
     equity = result.equity_curve
+    # Синхронизируем оси X между графиками
+    ax2.sharex(ax1)
     if equity:
         eq_x = df["timestamp"][:len(equity)]
         ax2.fill_between(eq_x, result.initial_balance, equity[:len(eq_x)],
