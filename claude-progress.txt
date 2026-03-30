@@ -54,3 +54,33 @@ Will try:
 1. Add maker fee option to best_configs 
 2. Test portfolio of top 3 strategies with equal allocation
 3. Update memory and docs
+
+02:35 — SESSION SUMMARY
+========================
+
+COMPLETED:
+1. LLM Trader strategy (14th strategy) — implemented with caching + sampling
+2. LLM backtest: gpt-5.4-mini -49.9%, gpt-5.4 -4.2% → NOT profitable standalone
+3. Maker fee analysis: +8-36% improvement with limit orders
+4. BTC Momentum re-optimization with calmar: -34.5% → worse than current
+5. All results committed and documented
+
+KEY FINDINGS THIS SESSION:
+- LLM as standalone trader: DOES NOT WORK (too conservative, bad timing)
+- Maker fee: SIGNIFICANT IMPACT (limit orders strongly recommended)
+- BTC remains hardest coin for Momentum Breakout (ETH/XRP much better)
+
+API SPEND: ~$2.12 out of $5 budget
+
+CURRENT BEST STRATEGIES (walk-forward verified, with taker fee):
+1. ETH Momentum Breakout 4h: +91.5% (portfolio BTC+ETH, 2% risk)
+2. BTC Regime Switcher 4h: +32.8% (portfolio)
+3. ETH BB Squeeze 4h: +43.0% (portfolio)
+
+WITH MAKER FEE these would be 8-36% higher.
+
+RECOMMENDATIONS FOR NEXT SESSION:
+1. Add maker/taker toggle to Telegram UI
+2. Set up live paper trading for top 3 strategies
+3. Test LLM as signal filter (not standalone)
+4. Try multi-coin portfolio bot (auto-allocate to best performer)
