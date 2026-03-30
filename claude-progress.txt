@@ -21,3 +21,36 @@ Should add maker/taker option to UI.
 
 01:05 — LLM BACKTEST started (gpt-5.4-mini, sample_every=6)
 Waiting for results...
+
+02:10 — LLM BACKTEST RESULTS (gpt-5.4-mini, BTC 4h, Jan 2025 — Mar 2026)
+- 444 API calls, 51 trades
+- PnL: -49.9% | WR: 25.5% | DD: 56.5%
+- Model too conservative (mostly HOLD), bad entries when it does trade
+- Cost: ~$1.33 (444 calls * $0.003)
+CONCLUSION: gpt-5.4-mini not smart enough for trading. Need to try gpt-5.4.
+
+02:10 — BTC MOMENTUM RE-OPTIMIZATION (calmar metric, 150 trials)
+- Best: channel=65, rr=5.0 → -34.5% on test
+- Calmar metric picks too conservative params for BTC
+CONCLUSION: BTC Momentum stays at -3% with current params. Not profitable on BTC.
+
+02:15 — NEXT: Try gpt-5.4 on shorter period (3 months, ~15 calls = $0.15)
+
+02:20 — GPT-5.4 FULL TEST (BTC 4h, 3 months, 79 calls = ~$0.79)
+- 79 API calls, 1 trade (!)
+- PnL: -4.2% | WR: 0% | DD: 4.2%
+- Model extremely conservative, 78/79 = HOLD
+- The one trade: SELL on Feb 11, stopped out
+CONCLUSION: Both mini and full GPT too conservative for autonomous trading.
+Need to either relax confidence threshold or modify prompt to be more active.
+
+02:25 — OVERALL LLM CONCLUSION:
+LLM as standalone strategy is NOT profitable in backtest.
+Better use case: LLM as FILTER for existing strategies (confirm/reject signals).
+Total API spend: ~$2.12 ($1.33 mini + $0.79 full)
+
+02:25 — MOVING ON: Focus on improving profitable strategies instead.
+Will try:
+1. Add maker fee option to best_configs 
+2. Test portfolio of top 3 strategies with equal allocation
+3. Update memory and docs
