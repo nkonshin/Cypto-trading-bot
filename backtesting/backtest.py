@@ -35,6 +35,13 @@ class BacktestTrade:
     custom_sl_pct: Optional[float] = None
     custom_tp_pct: Optional[float] = None
     partial_pnl: float = 0  # накопленный PnL от частичных TP
+    # Затраты
+    commission_entry: float = 0    # комиссия при входе
+    commission_exit: float = 0     # комиссия при выходе
+    slippage_cost: float = 0       # стоимость проскальзывания
+    funding_cost: float = 0        # ставка финансирования
+    pnl_gross: float = 0           # PnL до вычета затрат
+    pnl_net: float = 0             # PnL после всех затрат
 
 
 @dataclass
@@ -128,8 +135,9 @@ class Backtester:
         initial_balance: float = 100.0,
         risk_per_trade_pct: float = 2.0,
         leverage: int = 5,
-        commission_pct: float = 0.04,
+        commission_pct: float = 0.05,     # Binance Futures taker fee
         slippage_pct: float = 0.05,
+        funding_rate_pct: float = 0.01,   # Binance funding rate per 8h (0.01% default)
         stop_loss_pct: float = 2.0,
         take_profit_pct: float = 4.0,
         tp_mode: str = "full",
@@ -140,6 +148,7 @@ class Backtester:
         self.leverage = leverage
         self.commission_pct = commission_pct / 100
         self.slippage_pct = slippage_pct / 100
+        self.funding_rate_pct = funding_rate_pct / 100  # per 8h
         self.stop_loss_pct = stop_loss_pct
         self.take_profit_pct = take_profit_pct
         self.tp_mode = tp_mode
@@ -351,12 +360,18 @@ class Backtester:
                     sl_price_calc = entry_price * (1 + sl_pct_val)
                     tp_price_calc = entry_price * (1 - tp_pct_val)
 
+                # Затраты при входе
+                entry_commission = amount * entry_price * self.commission_pct
+                entry_slippage = abs(entry_price - current["close"]) * amount
+
                 open_trade = BacktestTrade(
                     entry_idx=i,
                     side=signal.type.value,
                     entry_price=entry_price,
                     amount=amount,
                     reason_entry=signal.reason,
+                    commission_entry=round(entry_commission, 4),
+                    slippage_cost=round(entry_slippage, 4),
                     entry_time=current["timestamp"].strftime("%Y-%m-%d %H:%M") if hasattr(current["timestamp"], "strftime") else str(current["timestamp"]),
                     stop_loss=round(sl_price_calc, 2),
                     take_profit=round(tp_price_calc, 2),
@@ -444,13 +459,30 @@ class Backtester:
         else:
             pnl_raw = (trade.entry_price - exit_price) * trade.amount
 
-        # Комиссия
-        commission = trade.amount * trade.entry_price * self.commission_pct
-        commission += trade.amount * exit_price * self.commission_pct
+        # Комиссия на выходе
+        exit_commission = trade.amount * exit_price * self.commission_pct
+        trade.commission_exit = round(exit_commission, 4)
 
-        trade.pnl = pnl_raw - commission
-        # PnL% от стоимости позиции (без учёта плеча)
+        # Funding rate: начисляется каждые 8 часов на размер позиции
+        # Рассчитываем количество 8h периодов в сделке
+        candles_in_trade = exit_idx - trade.entry_idx
+        timeframe_hours = {"1m": 1/60, "5m": 5/60, "15m": 0.25, "1h": 1, "4h": 4, "1d": 24, "1w": 168}
+        tf_hours = timeframe_hours.get(self.strategy.timeframe, 4)
+        hours_in_trade = candles_in_trade * tf_hours
+        funding_periods = hours_in_trade / 8  # каждые 8 часов
         position_value = trade.amount * trade.entry_price
+        funding_cost = position_value * self.funding_rate_pct * funding_periods
+        trade.funding_cost = round(funding_cost, 4)
+
+        # Gross PnL (до вычетов)
+        trade.pnl_gross = round(pnl_raw, 4)
+
+        # Net PnL = gross - все затраты
+        total_costs = trade.commission_entry + exit_commission + trade.slippage_cost + funding_cost
+        trade.pnl = round(pnl_raw - total_costs, 4)
+        trade.pnl_net = trade.pnl
+
+        # PnL%
         trade.pnl_pct = (trade.pnl / position_value * 100) if position_value > 0 else 0
 
         emoji = "+" if trade.pnl > 0 else ""

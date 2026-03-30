@@ -164,7 +164,8 @@ def _write_trades_sheet(ws, result: BacktestResult):
         "№", "Направление", "Вход (время)", "Выход (время)",
         "Длительность", "Цена входа", "Цена выхода",
         "Stop Loss", "Take Profit", "Плечо",
-        "Объём", "PnL (USDT)", "PnL (%)",
+        "Объём", "PnL Gross", "Комиссия", "Slippage", "Funding",
+        "PnL Net (USDT)", "PnL (%)",
         "Причина входа", "Причина выхода", "Результат",
     ]
 
@@ -196,11 +197,18 @@ def _write_trades_sheet(ws, result: BacktestResult):
 
         outcome = "Прибыль" if t.pnl > 0 else "Убыток" if t.pnl < 0 else "Безубыток"
 
+        total_commission = round(t.commission_entry + t.commission_exit, 4)
         values = [
             i, side_ru, t.entry_time or "", t.exit_time or "",
             duration, t.entry_price, t.exit_price,
             t.stop_loss, t.take_profit, t.leverage,
-            round(t.amount, 6), round(t.pnl, 2), round(t.pnl_pct, 2),
+            round(t.amount, 6),
+            round(t.pnl_gross, 2),       # Gross PnL
+            round(total_commission, 4),   # Комиссия
+            round(t.slippage_cost, 4),    # Slippage
+            round(t.funding_cost, 4),     # Funding
+            round(t.pnl, 2),             # Net PnL
+            round(t.pnl_pct, 2),
             t.reason_entry, t.reason_exit, outcome,
         ]
 
