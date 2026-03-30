@@ -13,14 +13,7 @@ BEST_CONFIGS = [
         "wf_test_pnl": "+272%",
         "wf_test_dd": "32.6%",
     },
-    {
-        "symbol": "ETH/USDT",
-        "strategy": "momentum_breakout",
-        "timeframe": "1h",
-        "label": "ETH Momentum 1h (скальп)",
-        "wf_test_pnl": "+207%",
-        "wf_test_dd": "38.9%",
-    },
+    # ETH 1h убран — убыточен с реальными комиссиями ($87 на 451 сделку)
     {
         "symbol": "XRP/USDT",
         "strategy": "momentum_breakout",
@@ -60,5 +53,13 @@ BEST_CONFIGS = [
         "label": "BTC Momentum 4h",
         "wf_test_pnl": "+19%",
         "wf_test_dd": "37.4%",
+    },
+    {
+        "symbol": "BTC/USDT",
+        "strategy": "rsi_trend",
+        "timeframe": "1d",
+        "label": "BTC RSI Trend 1d",
+        "wf_test_pnl": "+13%",
+        "wf_test_dd": "9.9%",
     },
 ]

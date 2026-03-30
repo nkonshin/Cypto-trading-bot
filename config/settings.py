@@ -33,6 +33,7 @@ class StrategyName(str, Enum):
     MOMENTUM_BREAKOUT = "momentum_breakout"
     REGIME_SWITCHER = "regime_switcher"
     BB_SQUEEZE = "bb_squeeze"
+    RSI_TREND = "rsi_trend"
 
 
 class Settings(BaseSettings):

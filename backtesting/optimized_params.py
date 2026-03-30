@@ -64,6 +64,24 @@ OPTIMIZED_PARAMS = {
             "take_profit_pct": 12.0,
         },
     },
+    "rsi_trend": {
+        # Walk-forward: BTC 1d, Train +26%, Test +12.6% | WR: 75% | DD: 9.9% | 16 trades
+        "strategy_params": {
+            "rsi_period": 14,
+            "rsi_buy": 35.0,
+            "rsi_sell": 60.0,
+            "rsi_close_long": 65.0,
+            "rsi_close_short": 35.0,
+            "ema_fast": 70,
+            "ema_slow": 200,
+            "sl_pct": 10.0,
+            "tp_pct": 10.0,
+        },
+        "backtest_params": {
+            "stop_loss_pct": 10.0,
+            "take_profit_pct": 10.0,
+        },
+    },
     "rsi_mean_reversion": {
         # Hyperopt v2: стратегия убыточна на 4h/5y (-84% лучший результат)
         # Не рекомендуется для длинных ТФ. Оставлены параметры для коротких периодов.

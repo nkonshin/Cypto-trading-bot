@@ -11,6 +11,7 @@ from strategies.trend_rider import TrendRiderStrategy
 from strategies.momentum_breakout import MomentumBreakoutStrategy
 from strategies.regime_switcher import RegimeSwitcherStrategy
 from strategies.bb_squeeze import BBSqueezeStrategy
+from strategies.rsi_trend import RsiTrendStrategy
 
 STRATEGY_MAP = {
     "ema_crossover": EmaCrossoverStrategy,
@@ -25,6 +26,7 @@ STRATEGY_MAP = {
     "momentum_breakout": MomentumBreakoutStrategy,
     "regime_switcher": RegimeSwitcherStrategy,
     "bb_squeeze": BBSqueezeStrategy,
+    "rsi_trend": RsiTrendStrategy,
 }
 
 __all__ = [
