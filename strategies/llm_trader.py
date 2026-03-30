@@ -10,7 +10,9 @@ LLM Trader — стратегия на основе GPT-5.4.
 
 import os
 import json
+import hashlib
 import logging
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -46,10 +48,47 @@ class LlmTraderStrategy(BaseStrategy):
     min_candles = 50
     risk_category = "moderate"
 
-    def __init__(self, model: str = "gpt-5.4", min_confidence: float = 0.6):
+    def __init__(self, model: str = "gpt-5.4", min_confidence: float = 0.6,
+                 sample_every: int = 6, use_cache: bool = True):
+        """
+        Args:
+            model: OpenAI model name
+            min_confidence: minimum confidence to enter trade
+            sample_every: call LLM every N candles (6 = once per day on 4h)
+            use_cache: cache LLM responses to avoid duplicate API calls
+        """
         self.model = model
         self.min_confidence = min_confidence
+        self.sample_every = sample_every
+        self.use_cache = use_cache
         self._client = None
+        self._call_count = 0
+        self._cache_dir = Path("data/llm_cache")
+        self._last_signal = None
+        self._candles_since_call = 0
+
+    def _cache_key(self, market_data: str) -> str:
+        """Generate cache key from market data."""
+        return hashlib.md5(f"{self.model}:{market_data}".encode()).hexdigest()
+
+    def _get_cached(self, key: str) -> Optional[dict]:
+        """Load cached LLM response."""
+        if not self.use_cache:
+            return None
+        cache_file = self._cache_dir / f"{key}.json"
+        if cache_file.exists():
+            try:
+                return json.loads(cache_file.read_text())
+            except Exception:
+                return None
+        return None
+
+    def _save_cache(self, key: str, result: dict):
+        """Save LLM response to cache."""
+        if not self.use_cache:
+            return
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        (self._cache_dir / f"{key}.json").write_text(json.dumps(result))
 
     def _get_client(self):
         if self._client is None:
@@ -139,11 +178,27 @@ class LlmTraderStrategy(BaseStrategy):
             return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
                           reason="Недостаточно данных")
 
+        # Sampling: вызываем LLM раз в sample_every свечей
+        self._candles_since_call += 1
+        if self._candles_since_call < self.sample_every and self._last_signal is not None:
+            # Между вызовами возвращаем HOLD (SL/TP работают в бэктестере)
+            return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
+                          reason=f"Ожидание ({self._candles_since_call}/{self.sample_every})")
+
+        self._candles_since_call = 0
+
         # Готовим данные
         market_data = self._prepare_market_data(df, symbol)
 
-        # Вызываем LLM
-        result = self._call_llm(market_data)
+        # Проверяем кеш
+        cache_key = self._cache_key(market_data)
+        cached = self._get_cached(cache_key)
+        if cached:
+            result = cached
+        else:
+            result = self._call_llm(market_data)
+            self._save_cache(cache_key, result)
+            self._call_count += 1
 
         action = result.get("action", "hold")
         confidence = result.get("confidence", 0)
@@ -167,21 +222,24 @@ class LlmTraderStrategy(BaseStrategy):
                           indicators=indicators)
 
         if action == "buy":
+            self._last_signal = "buy"
             return Signal(
                 type=SignalType.BUY, strength=confidence, price=df.iloc[-1]["close"],
                 symbol=symbol, strategy=self.name,
-                reason=f"LLM BUY ({confidence:.0%}): {reasoning}",
+                reason=f"LLM BUY ({confidence:.0%}): {reasoning} [call #{self._call_count}]",
                 indicators=indicators,
                 custom_sl_pct=sl_pct, custom_tp_pct=tp_pct,
             )
         elif action == "sell":
+            self._last_signal = "sell"
             return Signal(
                 type=SignalType.SELL, strength=confidence, price=df.iloc[-1]["close"],
                 symbol=symbol, strategy=self.name,
-                reason=f"LLM SELL ({confidence:.0%}): {reasoning}",
+                reason=f"LLM SELL ({confidence:.0%}): {reasoning} [call #{self._call_count}]",
                 indicators=indicators,
                 custom_sl_pct=sl_pct, custom_tp_pct=tp_pct,
             )
 
+        self._last_signal = "hold"
         return Signal(type=SignalType.HOLD, symbol=symbol, strategy=self.name,
                       reason=f"LLM HOLD: {reasoning}", indicators=indicators)

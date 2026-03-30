@@ -1,0 +1,23 @@
+CLAUDE AUTONOMOUS SESSION LOG — 2026-03-31
+============================================
+
+PLAN:
+1. Fix LLM strategy for sampled backtest (cheap, ~$1-2)
+2. Run LLM backtest on BTC 4h (walk-forward period)
+3. Test LLM as filter for Momentum Breakout
+4. Analyze weak strategies, try improvements
+5. Test maker fee impact (0.02% vs 0.05%)
+6. Commit each improvement
+
+SESSION START: 00:50 UTC
+
+01:00 — MAKER FEE TEST (walk-forward, July 2024+, 4% risk)
+Taker 0.05% vs Maker 0.02%:
+- BTC Momentum: -3% → +10% (limit orders add +13%)
+- ETH Momentum: +217% → +253% (+36%)
+- BTC Regime: +86% → +94% (+8%)
+CONCLUSION: Using limit orders significantly improves results.
+Should add maker/taker option to UI.
+
+01:05 — LLM BACKTEST started (gpt-5.4-mini, sample_every=6)
+Waiting for results...
