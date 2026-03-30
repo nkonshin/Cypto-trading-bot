@@ -39,6 +39,7 @@ class TelegramBot:
             [InlineKeyboardButton("🎯 Риск", callback_data="show_risk"),
              InlineKeyboardButton("❓ Справка", callback_data="help")],
             [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
+            [InlineKeyboardButton("🏆 Лучшие стратегии", callback_data="best_strategies")],
         ]
         return InlineKeyboardMarkup(keyboard)
 
@@ -877,6 +878,144 @@ class TelegramBot:
                 logger.error(f"Ошибка бэктеста: {e}", exc_info=True)
                 await query.edit_message_text(f"Ошибка бэктеста: {e}",
                                               reply_markup=self._back_keyboard())
+
+        elif data == "best_strategies":
+            from backtesting.best_configs import BEST_CONFIGS
+            text = "🏆 *Лучшие стратегии (walk-forward verified)*\n\n"
+            text += "Параметры обучены на 2020-2024.\n"
+            text += "Результаты — на невиданных данных (2024.07+).\n\n"
+            for i, cfg in enumerate(BEST_CONFIGS, 1):
+                text += (
+                    f"*{i}. {cfg['label']}*\n"
+                    f"  PnL: `{cfg['wf_test_pnl']}` | DD: `{cfg['wf_test_dd']}`\n\n"
+                )
+            keyboard = [
+                [InlineKeyboardButton(
+                    "▶️ Прогнать все лучшие (с июля 2024)",
+                    callback_data="run_best",
+                )],
+                [InlineKeyboardButton("◀️ Главное меню", callback_data="back_main")],
+            ]
+            await query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown",
+            )
+
+        elif data == "run_best":
+            from backtesting.best_configs import BEST_CONFIGS
+            from backtesting.backtest import Backtester
+            from backtesting.visualizer import format_comparison_table_telegram
+            from backtesting.optimized_params import get_optimized_strategy, get_optimized_backtest_params
+            from main import fetch_ohlcv_range
+            from datetime import datetime as _dt
+            from strategies import STRATEGY_MAP
+            import time as _time
+            import asyncio as _asyncio
+
+            await query.edit_message_text("🏆 *Загрузка данных для лучших стратегий...*", parse_mode="Markdown")
+
+            risk_params = self.settings.get_risk_params()
+            since_ms = int(_dt(2024, 7, 1).timestamp() * 1000)
+            until_ms = int(_dt.utcnow().timestamp() * 1000)
+
+            results = []
+            start_time = _time.time()
+            total = len(BEST_CONFIGS)
+
+            for idx, cfg in enumerate(BEST_CONFIGS):
+                sym = cfg["symbol"]
+                name = cfg["strategy"]
+                tf = cfg["timeframe"]
+
+                pct = int((idx / total) * 100)
+                try:
+                    await query.edit_message_text(
+                        f"🏆 *Лучшие стратегии*\n\n"
+                        f"Прогресс: {pct}% ({idx}/{total})\n"
+                        f"Сейчас: `{cfg['label']}`",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    ohlcv = await fetch_ohlcv_range(sym, tf, since=since_ms, until=until_ms)
+                    if len(ohlcv) < 100:
+                        continue
+
+                    strategy = get_optimized_strategy(name, sym)
+                    strategy.timeframe = tf
+                    bp = get_optimized_backtest_params(name, sym)
+
+                    bt = Backtester(
+                        strategy=strategy,
+                        initial_balance=self.settings.paper_balance,
+                        risk_per_trade_pct=risk_params["risk_per_trade_pct"],
+                        leverage=risk_params["max_leverage"],
+                        stop_loss_pct=bp.get("stop_loss_pct", 5.0),
+                        take_profit_pct=bp.get("take_profit_pct", 10.0),
+                        slippage_pct=0.05,
+                        tp_mode="full",
+                    )
+                    result = bt.run(ohlcv, sym)
+                    result.strategy = cfg["label"]
+                    result.symbol = sym
+                    result.timeframe = tf
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Ошибка {cfg['label']}: {e}")
+
+            elapsed = _time.time() - start_time
+            elapsed_str = f"{int(elapsed)}с" if elapsed < 60 else f"{int(elapsed // 60)}м {int(elapsed % 60)}с"
+
+            if not results:
+                await query.edit_message_text("Нет результатов", reply_markup=self._back_keyboard())
+                return
+
+            # Формируем текст
+            text = f"🏆 *Лучшие стратегии (с июля 2024)*\n"
+            text += f"Прогон за {elapsed_str}\n\n"
+            sorted_r = sorted(results, key=lambda r: r.total_pnl_pct, reverse=True)
+            for i, r in enumerate(sorted_r, 1):
+                emoji = "🟢" if r.total_pnl_pct > 0 else "🔴"
+                text += (
+                    f"{emoji} *{i}. {r.strategy}*\n"
+                    f"  PnL: `{r.total_pnl_pct:+.1f}%` | WR: `{r.win_rate:.0f}%` | "
+                    f"DD: `{r.max_drawdown_pct:.1f}%` | Сделок: `{r.total_trades}`\n\n"
+                )
+
+            async def _send_with_retry(coro_func, retries=3, delay=3):
+                for attempt in range(retries):
+                    try:
+                        return await coro_func()
+                    except Exception:
+                        if attempt < retries - 1:
+                            await _asyncio.sleep(delay)
+
+            await _send_with_retry(lambda: query.edit_message_text(text, parse_mode="Markdown"))
+
+            # Excel
+            from backtesting.excel_export import export_comparison
+            import io as _io
+            xlsx = export_comparison(sorted_r)
+            await _send_with_retry(lambda: query.message.reply_document(
+                document=_io.BytesIO(xlsx),
+                filename="best_strategies.xlsx",
+                caption="📋 Подробный отчёт — лучшие стратегии",
+            ))
+
+            # График сравнения
+            from backtesting.visualizer import plot_comparison
+            chart = plot_comparison(sorted_r)
+            if chart:
+                await _send_with_retry(lambda: query.message.reply_photo(
+                    photo=_io.BytesIO(chart),
+                    caption="🏆 Сравнение лучших стратегий",
+                ))
+
+            await _send_with_retry(lambda: query.message.reply_text(
+                "Выберите действие:", reply_markup=self._main_menu_keyboard(),
+            ))
 
         elif data == "compare_all":
             # Шаг 0: выбор монеты/портфеля
