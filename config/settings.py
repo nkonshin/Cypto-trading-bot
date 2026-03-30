@@ -34,12 +34,16 @@ class StrategyName(str, Enum):
     REGIME_SWITCHER = "regime_switcher"
     BB_SQUEEZE = "bb_squeeze"
     RSI_TREND = "rsi_trend"
+    LLM_TRADER = "llm_trader"
 
 
 class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = ""
     telegram_allowed_users: str = ""  # comma-separated user IDs
+
+    # OpenAI
+    openai_api_key: str = ""
 
     # Exchange keys
     binance_api_key: str = ""
