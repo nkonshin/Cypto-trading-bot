@@ -187,6 +187,63 @@ def bb_squeeze_factory(trial: optuna.Trial):
     )
 
 
+def vwap_scalper_factory(trial: optuna.Trial):
+    from strategies.vwap_scalper import VwapScalperStrategy
+    return VwapScalperStrategy(
+        vwap_reset_hours=trial.suggest_int("vwap_reset_hours", 12, 48, step=6),
+        entry_std=trial.suggest_float("entry_std", 1.0, 2.5, step=0.25),
+        adx_filter=trial.suggest_float("adx_filter", 20, 40, step=5),
+        adx_period=trial.suggest_int("adx_period", 10, 20),
+        ema_filter_period=trial.suggest_int("ema_filter_period", 30, 80, step=10),
+    )
+
+
+def stochrsi_scalper_factory(trial: optuna.Trial):
+    from strategies.stochrsi_scalper import StochRsiScalperStrategy
+    return StochRsiScalperStrategy(
+        rsi_period=trial.suggest_int("rsi_period", 7, 21),
+        stoch_period=trial.suggest_int("stoch_period", 7, 21),
+        k_smooth=trial.suggest_int("k_smooth", 2, 5),
+        d_smooth=trial.suggest_int("d_smooth", 2, 5),
+        oversold=trial.suggest_float("oversold", 10, 30, step=5),
+        overbought=trial.suggest_float("overbought", 70, 90, step=5),
+        ema_trend=trial.suggest_int("ema_trend", 30, 80, step=10),
+        atr_period=trial.suggest_int("atr_period", 7, 14),
+        atr_sl_mult=trial.suggest_float("atr_sl_mult", 0.5, 2.0, step=0.25),
+        atr_tp_mult=trial.suggest_float("atr_tp_mult", 1.0, 4.0, step=0.5),
+    )
+
+
+def scalp_ema_macd_factory(trial: optuna.Trial):
+    from strategies.scalp_ema_macd import ScalpEmaMacdStrategy
+    return ScalpEmaMacdStrategy(
+        ema_fast=trial.suggest_int("ema_fast", 5, 15),
+        ema_slow=trial.suggest_int("ema_slow", 15, 30),
+        ema_trend=trial.suggest_int("ema_trend", 30, 80, step=10),
+        rsi_period=trial.suggest_int("rsi_period", 7, 21),
+        rsi_long_min=trial.suggest_float("rsi_long_min", 35, 50, step=5),
+        rsi_long_max=trial.suggest_float("rsi_long_max", 65, 80, step=5),
+        atr_period=trial.suggest_int("atr_period", 7, 14),
+        atr_sl_mult=trial.suggest_float("atr_sl_mult", 0.5, 2.0, step=0.25),
+        rr_ratio=trial.suggest_float("rr_ratio", 1.5, 3.0, step=0.5),
+    )
+
+
+def micro_breakout_factory(trial: optuna.Trial):
+    from strategies.micro_breakout import MicroBreakoutStrategy
+    return MicroBreakoutStrategy(
+        atr_period=trial.suggest_int("atr_period", 10, 20),
+        atr_lookback=trial.suggest_int("atr_lookback", 50, 150, step=25),
+        atr_percentile=trial.suggest_float("atr_percentile", 15, 35, step=5),
+        channel_period=trial.suggest_int("channel_period", 10, 30, step=5),
+        ema_trend=trial.suggest_int("ema_trend", 30, 80, step=10),
+        min_squeeze_bars=trial.suggest_int("min_squeeze_bars", 2, 8),
+        atr_sl_mult=trial.suggest_float("atr_sl_mult", 1.0, 3.0, step=0.5),
+        rr_ratio=trial.suggest_float("rr_ratio", 2.0, 4.0, step=0.5),
+        volume_breakout_mult=trial.suggest_float("volume_breakout_mult", 0.8, 2.0, step=0.2),
+    )
+
+
 STRATEGY_FACTORIES = {
     "ema_crossover": ema_crossover_factory,
     "rsi_mean_reversion": rsi_mean_reversion_factory,
@@ -195,4 +252,8 @@ STRATEGY_FACTORIES = {
     "trend_rider": trend_rider_factory,
     "momentum_breakout": momentum_breakout_factory,
     "bb_squeeze": bb_squeeze_factory,
+    "vwap_scalper": vwap_scalper_factory,
+    "stochrsi_scalper": stochrsi_scalper_factory,
+    "scalp_ema_macd": scalp_ema_macd_factory,
+    "micro_breakout": micro_breakout_factory,
 }

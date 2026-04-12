@@ -13,6 +13,10 @@ from strategies.regime_switcher import RegimeSwitcherStrategy
 from strategies.bb_squeeze import BBSqueezeStrategy
 from strategies.rsi_trend import RsiTrendStrategy
 from strategies.llm_trader import LlmTraderStrategy
+from strategies.vwap_scalper import VwapScalperStrategy
+from strategies.stochrsi_scalper import StochRsiScalperStrategy
+from strategies.scalp_ema_macd import ScalpEmaMacdStrategy
+from strategies.micro_breakout import MicroBreakoutStrategy
 
 STRATEGY_MAP = {
     "ema_crossover": EmaCrossoverStrategy,
@@ -29,6 +33,10 @@ STRATEGY_MAP = {
     "bb_squeeze": BBSqueezeStrategy,
     "rsi_trend": RsiTrendStrategy,
     "llm_trader": LlmTraderStrategy,
+    "vwap_scalper": VwapScalperStrategy,
+    "stochrsi_scalper": StochRsiScalperStrategy,
+    "scalp_ema_macd": ScalpEmaMacdStrategy,
+    "micro_breakout": MicroBreakoutStrategy,
 }
 
 __all__ = [
@@ -37,4 +45,6 @@ __all__ = [
     "GridStrategy", "SmartDcaStrategy", "SupertrendStrategy",
     "MultiIndicatorStrategy", "AdaptiveStrategy",
     "MultiTimeframeStrategy",
+    "VwapScalperStrategy", "StochRsiScalperStrategy",
+    "ScalpEmaMacdStrategy", "MicroBreakoutStrategy",
 ]

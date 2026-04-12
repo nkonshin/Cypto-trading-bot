@@ -19,9 +19,11 @@ from datetime import datetime
 
 from config import settings, StrategyName
 from bot.engine import TradingEngine
+from bot.paper_trader import PaperTrader
 from telegram_ui.bot import TelegramBot
 from backtesting.backtest import Backtester
 from strategies import STRATEGY_MAP
+from utils.database import Database
 
 # Настройка логирования
 logging.basicConfig(
@@ -143,7 +145,7 @@ async def run_trading_loop(engine: TradingEngine, telegram: TelegramBot = None,
 
 
 async def run_with_telegram(engine: TradingEngine) -> None:
-    """Запуск с Telegram ботом."""
+    """Запуск с Telegram ботом + Paper Trader."""
     telegram = TelegramBot(settings, engine)
     app = telegram.build()
 
@@ -153,16 +155,44 @@ async def run_with_telegram(engine: TradingEngine) -> None:
     interval_map = {"1m": 30, "5m": 60, "15m": 120, "30m": 300, "1h": 600, "4h": 1800}
     interval = interval_map.get(tf, 300)
 
+    # Paper Trader — параллельные демо-счета
+    paper_db = Database(settings.db_path)
+    await paper_db.connect()
+
+    async def notify_all(text: str):
+        """Отправляет уведомление всем пользователям."""
+        for user_id in settings.allowed_user_ids:
+            try:
+                await app.bot.send_message(chat_id=user_id, text=text)
+            except Exception as e:
+                logger.error(f"Ошибка отправки {user_id}: {e}")
+
+    paper_trader = PaperTrader(db=paper_db, notify_callback=notify_all)
+
+    # Сохраняем paper_trader в engine для доступа из Telegram UI
+    engine.paper_trader = paper_trader
+
     async with app:
         await app.start()
         await app.updater.start_polling()
         logger.info("Telegram бот запущен")
 
+        # Запускаем Paper Trader
+        await paper_trader.start()
+        paper_task = asyncio.create_task(paper_trader.run(), name="paper_trader")
+        logger.info("Paper Trader запущен параллельно")
+
         try:
-            await run_trading_loop(engine, telegram, interval)
+            # Paper Trader делает всю торговлю,
+            # основной цикл просто держит бота живым
+            while engine._running:
+                await asyncio.sleep(60)
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("Получен сигнал остановки")
         finally:
+            await paper_trader.stop()
+            paper_task.cancel()
+            await paper_db.close()
             await app.updater.stop()
             await app.stop()
             await engine.stop()

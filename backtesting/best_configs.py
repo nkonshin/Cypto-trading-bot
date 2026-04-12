@@ -67,4 +67,21 @@ BEST_CONFIGS = [
         "wf_test_pnl": "+13%",
         "wf_test_dd": "9.9%",
     },
+    # --- Скальперские стратегии (15m, walk-forward 2025.10 — 2026.03, maker fee 0.02%) ---
+    {
+        "symbol": "SOL/USDT",
+        "strategy": "micro_breakout",
+        "timeframe": "15m",
+        "label": "SOL Micro Breakout 15m",
+        "wf_test_pnl": "+48%",
+        "wf_test_dd": "30.6%",
+    },
+    {
+        "symbol": "ETH/USDT",
+        "strategy": "micro_breakout",
+        "timeframe": "15m",
+        "label": "ETH Micro Breakout 15m",
+        "wf_test_pnl": "+17%",
+        "wf_test_dd": "24.0%",
+    },
 ]

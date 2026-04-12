@@ -116,6 +116,25 @@ COIN_OPTIMIZED_PARAMS = {
                 "take_profit_pct": 7.0,
             },
         },
+        "micro_breakout": {
+            # Walk-forward 15m: Train +288%, Test +16.6% | WR: 27% | DD: 24.0% | PF: 1.12
+            # Maker fee 0.02%, slippage 0.03%
+            "strategy_params": {
+                "atr_period": 14,
+                "atr_lookback": 75,
+                "atr_percentile": 35.0,
+                "channel_period": 10,
+                "ema_trend": 70,
+                "min_squeeze_bars": 8,
+                "atr_sl_mult": 2.0,
+                "rr_ratio": 3.5,
+                "volume_breakout_mult": 2.0,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 3.5,
+                "take_profit_pct": 7.0,
+            },
+        },
         "bb_squeeze": {
             # Walk-forward: Train +124%, Test +109.2% | WR: 40.7% | DD: 23.7%
             "strategy_params": {
@@ -166,6 +185,25 @@ COIN_OPTIMIZED_PARAMS = {
             "backtest_params": {
                 "stop_loss_pct": 5.0,
                 "take_profit_pct": 10.0,
+            },
+        },
+        "micro_breakout": {
+            # Walk-forward 15m: Train +200%, Test +47.9% | WR: 32% | DD: 30.6% | PF: 1.37
+            # Maker fee 0.02%, slippage 0.03%
+            "strategy_params": {
+                "atr_period": 14,
+                "atr_lookback": 75,
+                "atr_percentile": 35.0,
+                "channel_period": 10,
+                "ema_trend": 70,
+                "min_squeeze_bars": 8,
+                "atr_sl_mult": 2.0,
+                "rr_ratio": 3.5,
+                "volume_breakout_mult": 2.0,
+            },
+            "backtest_params": {
+                "stop_loss_pct": 2.0,
+                "take_profit_pct": 4.0,
             },
         },
     },

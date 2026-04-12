@@ -40,6 +40,8 @@ class TelegramBot:
              InlineKeyboardButton("❓ Справка", callback_data="help")],
             [InlineKeyboardButton("📊 Сравнить стратегии", callback_data="compare_all")],
             [InlineKeyboardButton("🏆 Лучшие стратегии", callback_data="best_strategies")],
+            [InlineKeyboardButton("📡 Live Paper Trading", callback_data="paper_status"),
+             InlineKeyboardButton("📋 Логи анализа", callback_data="paper_logs")],
         ]
         return InlineKeyboardMarkup(keyboard)
 
@@ -79,27 +81,17 @@ class TelegramBot:
         )
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Команда /status — статус бота."""
+        """Команда /status — статус paper trading."""
         if not await self._check_auth(update):
             return
-        status = await self.engine.get_status()
-        text = self._format_status(status)
+        text = self._format_paper_status()
         await update.message.reply_text(text, parse_mode="Markdown")
 
     async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Команда /balance — баланс."""
+        """Команда /balance — балансы paper trading."""
         if not await self._check_auth(update):
             return
-        status = await self.engine.get_status()
-        text = (
-            f"💰 *Баланс*\n\n"
-            f"Текущий: `{status['balance']:.2f}` USDT\n"
-            f"Пиковый: `{status['peak_balance']:.2f}` USDT\n"
-            f"Просадка: `{status['drawdown_pct']:.1f}%`\n"
-            f"PnL сегодня: `{status['daily_pnl']:+.2f}` USDT\n"
-            f"PnL всего: `{status['total_pnl']:+.2f}` USDT\n"
-            f"Режим: `{status['mode']}`"
-        )
+        text = self._format_paper_balance()
         await update.message.reply_text(text, parse_mode="Markdown")
 
     async def cmd_trades(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -560,19 +552,13 @@ class TelegramBot:
         data = query.data
 
         if data == "status":
-            status = await self.engine.get_status()
-            await query.edit_message_text(self._format_status(status),
+            text = self._format_paper_status()
+            await query.edit_message_text(text,
                                           reply_markup=self._back_keyboard(),
                                           parse_mode="Markdown")
 
         elif data == "balance":
-            status = await self.engine.get_status()
-            text = (
-                f"💰 *Баланс*\n\n"
-                f"Текущий: `{status['balance']:.2f}` USDT\n"
-                f"PnL сегодня: `{status['daily_pnl']:+.2f}` USDT\n"
-                f"PnL всего: `{status['total_pnl']:+.2f}` USDT"
-            )
+            text = self._format_paper_balance()
             await query.edit_message_text(text, reply_markup=self._back_keyboard(),
                                           parse_mode="Markdown")
 
@@ -694,15 +680,7 @@ class TelegramBot:
             )
 
         elif data == "history":
-            trades = await self.engine.db.get_trades_history(limit=5)
-            if not trades:
-                await query.edit_message_text("📭 История пуста",
-                                              reply_markup=self._back_keyboard())
-                return
-            text = "📜 *Последние 5 сделок:*\n\n"
-            for t in trades:
-                emoji = "✅" if t["pnl"] > 0 else "❌" if t["pnl"] < 0 else "⏳"
-                text += f"{emoji} {t['symbol']} {t['side'].upper()} | PnL: `{t['pnl']:+.2f}`\n"
+            text = await self._format_paper_history()
             await query.edit_message_text(text, reply_markup=self._back_keyboard(),
                                           parse_mode="Markdown")
 
@@ -878,6 +856,74 @@ class TelegramBot:
                 logger.error(f"Ошибка бэктеста: {e}", exc_info=True)
                 await query.edit_message_text(f"Ошибка бэктеста: {e}",
                                               reply_markup=self._back_keyboard())
+
+        elif data == "paper_logs":
+            paper_trader = getattr(self.engine, 'paper_trader', None)
+            if not paper_trader or not paper_trader.accounts:
+                await query.edit_message_text(
+                    "📋 Paper Trading не запущен.",
+                    reply_markup=self._back_keyboard(),
+                )
+            else:
+                logs = paper_trader.get_logs(last_n=10)
+                text = "📋 Логи анализа\n\n"
+                for acc_id, entries in logs.items():
+                    acc = paper_trader.accounts[acc_id]
+                    text += f"▸ {acc_id} ({acc.strategy.name} {acc.strategy.timeframe})\n"
+                    if not entries:
+                        text += "  Анализов ещё не было\n\n"
+                        continue
+                    for e in entries:
+                        sig = e["signal"]
+                        if sig == "hold":
+                            icon = "⚪"
+                        elif sig in ("buy", "sell"):
+                            icon = "🟢" if sig == "buy" else "🔴"
+                        else:
+                            icon = "⚫"
+                        price_str = f" @ {e['price']}" if e["price"] else ""
+                        reason = (e.get("reason") or "")[:55]
+                        text += f"  {icon} {e['time']}{price_str}\n"
+                        if reason:
+                            text += f"     {reason}\n"
+                    text += "\n"
+                if len(text) > 4000:
+                    text = text[:3950] + "\n\n...обрезано"
+                await query.edit_message_text(
+                    text, reply_markup=self._back_keyboard(),
+                )
+
+        elif data == "paper_status":
+            paper_trader = getattr(self.engine, 'paper_trader', None)
+            if not paper_trader or not paper_trader.accounts:
+                await query.edit_message_text(
+                    "📡 Paper Trading не запущен.\n"
+                    "Перезапустите бота для активации.",
+                    reply_markup=self._back_keyboard(),
+                )
+            else:
+                text = "📡 *Live Paper Trading*\n\n"
+                for acc_info in paper_trader.get_status():
+                    pnl_emoji = "🟢" if acc_info["pnl_pct"] >= 0 else "🔴"
+                    pos_text = ""
+                    if acc_info["in_position"] and acc_info.get("position"):
+                        p = acc_info["position"]
+                        pos_text = (
+                            f"\n  📌 {p['side'].upper()} @ {p['entry']:.2f}"
+                            f"\n  SL: {p['sl']:.2f} | TP: {p['tp']:.2f}"
+                        )
+
+                    text += (
+                        f"*{acc_info['account_id']}*\n"
+                        f"  {acc_info['strategy']} {acc_info['symbol']} {acc_info['timeframe']}\n"
+                        f"  {pnl_emoji} Баланс: {acc_info['balance']:.2f}$ ({acc_info['pnl_pct']:+.1f}%)\n"
+                        f"  Сделок: {acc_info['trade_count']} | WR: {acc_info['win_rate']:.0f}%"
+                        f"{pos_text}\n\n"
+                    )
+                await query.edit_message_text(
+                    text, parse_mode="Markdown",
+                    reply_markup=self._back_keyboard(),
+                )
 
         elif data == "best_strategies":
             from backtesting.best_configs import BEST_CONFIGS
@@ -1562,8 +1608,97 @@ class TelegramBot:
 
     # === Хелперы ===
 
+    def _format_paper_status(self) -> str:
+        """Форматирует статус paper trading аккаунтов."""
+        paper_trader = getattr(self.engine, 'paper_trader', None)
+        if not paper_trader or not paper_trader.accounts:
+            return "📡 Paper Trading не запущен."
+
+        text = "📡 *Live Paper Trading*\n\n"
+        for acc in paper_trader.accounts.values():
+            pnl_emoji = "🟢" if acc.pnl_pct >= 0 else "🔴"
+            pos_text = "⏳ Ожидает сигнал"
+            if acc.open_trade:
+                t = acc.open_trade
+                side = "LONG" if t["side"] == "buy" else "SHORT"
+                pos_text = (
+                    f"📌 {side} @ {t['entry_price']:.2f} (${t['cost']:.2f})\n"
+                    f"    SL: {t['sl_price']:.2f} | TP: {t['tp_price']:.2f}"
+                )
+
+            text += (
+                f"*{acc.account_id}*\n"
+                f"  Стратегия: `{acc.strategy.name}` {acc.symbol} {acc.strategy.timeframe}\n"
+                f"  Risk: `{acc.risk_pct}%` | Leverage: `{acc.leverage}x`\n"
+                f"  {pnl_emoji} Капитал: `{acc.equity:.2f}$` ({acc.pnl_pct:+.1f}%)\n"
+                f"  Свободно: `{acc.balance:.2f}$`\n"
+                f"  Сделок: `{acc.trade_count}` | WR: `{acc.win_rate:.0f}%`\n"
+                f"  {pos_text}\n\n"
+            )
+        return text
+
+    def _format_paper_balance(self) -> str:
+        """Форматирует балансы paper trading."""
+        paper_trader = getattr(self.engine, 'paper_trader', None)
+        if not paper_trader or not paper_trader.accounts:
+            return "📡 Paper Trading не запущен."
+
+        text = "💰 *Балансы Paper Trading*\n\n"
+        total_equity = 0
+        total_initial = 0
+        for acc in paper_trader.accounts.values():
+            pnl_emoji = "📈" if acc.pnl_pct >= 0 else "📉"
+            in_pos = " (в позиции)" if acc.open_trade else ""
+            text += (
+                f"*{acc.account_id}*\n"
+                f"  {acc.strategy.name} {acc.symbol} {acc.strategy.timeframe}\n"
+                f"  Старт: `{acc.initial_balance:.2f}$`\n"
+                f"  Капитал: `{acc.equity:.2f}$`{in_pos}\n"
+                f"  Свободно: `{acc.balance:.2f}$`\n"
+                f"  {pnl_emoji} PnL: `{acc.pnl_pct:+.1f}%` (`{acc.equity - acc.initial_balance:+.2f}$`)\n\n"
+            )
+            total_equity += acc.equity
+            total_initial += acc.initial_balance
+
+        total_pnl_pct = (total_equity - total_initial) / total_initial * 100 if total_initial > 0 else 0
+        pnl_emoji = "📈" if total_pnl_pct >= 0 else "📉"
+        text += (
+            f"*ИТОГО:*\n"
+            f"  Капитал: `{total_equity:.2f}$` из `{total_initial:.2f}$`\n"
+            f"  {pnl_emoji} PnL: `{total_pnl_pct:+.1f}%`"
+        )
+        return text
+
+    async def _format_paper_history(self) -> str:
+        """Форматирует историю сделок paper trading."""
+        paper_trader = getattr(self.engine, 'paper_trader', None)
+        if not paper_trader or not paper_trader.accounts:
+            return "📡 Paper Trading не запущен."
+
+        # Собираем сделки из БД (live_ prefix)
+        trades = await self.engine.db.get_trades_history(limit=10)
+        live_trades = [t for t in trades if t.get("strategy", "").startswith("live_")]
+
+        if not live_trades:
+            text = "📜 *История Paper Trading*\n\n"
+            text += "Сделок пока нет. Стратегии анализируют рынок...\n\n"
+            for acc in paper_trader.accounts.values():
+                text += f"• {acc.account_id}: ожидает сигнал\n"
+            return text
+
+        text = "📜 *Последние сделки Paper Trading:*\n\n"
+        for t in live_trades:
+            emoji = "✅" if t["pnl"] > 0 else "❌"
+            strat = t["strategy"].replace("live_", "")
+            pnl_pct = t["pnl"] / t["cost"] * 100 if t["cost"] > 0 else 0
+            text += (
+                f"{emoji} `{strat}` {t['symbol']} {t['side'].upper()}\n"
+                f"   {t['price']:.2f} | PnL: `{t['pnl']:+.2f}$` ({pnl_pct:+.1f}%)\n"
+            )
+        return text
+
     def _format_status(self, status: dict) -> str:
-        """Форматирует статус для отображения."""
+        """Форматирует статус для отображения (legacy)."""
         running_emoji = "🟢" if status["running"] else "🔴"
         pnl_emoji = "📈" if status["total_pnl"] >= 0 else "📉"
 

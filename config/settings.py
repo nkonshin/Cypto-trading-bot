@@ -35,6 +35,10 @@ class StrategyName(str, Enum):
     BB_SQUEEZE = "bb_squeeze"
     RSI_TREND = "rsi_trend"
     LLM_TRADER = "llm_trader"
+    VWAP_SCALPER = "vwap_scalper"
+    STOCHRSI_SCALPER = "stochrsi_scalper"
+    SCALP_EMA_MACD = "scalp_ema_macd"
+    MICRO_BREAKOUT = "micro_breakout"
 
 
 class Settings(BaseSettings):
