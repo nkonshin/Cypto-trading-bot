@@ -17,6 +17,7 @@ from strategies.vwap_scalper import VwapScalperStrategy
 from strategies.stochrsi_scalper import StochRsiScalperStrategy
 from strategies.scalp_ema_macd import ScalpEmaMacdStrategy
 from strategies.micro_breakout import MicroBreakoutStrategy
+from strategies.combined_regime import CombinedRegimeStrategy, PureFakeBreakoutStrategy
 
 STRATEGY_MAP = {
     "ema_crossover": EmaCrossoverStrategy,
@@ -37,6 +38,8 @@ STRATEGY_MAP = {
     "stochrsi_scalper": StochRsiScalperStrategy,
     "scalp_ema_macd": ScalpEmaMacdStrategy,
     "micro_breakout": MicroBreakoutStrategy,
+    "combined_regime": CombinedRegimeStrategy,
+    "pure_fake_breakout": PureFakeBreakoutStrategy,
 }
 
 __all__ = [
