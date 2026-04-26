@@ -15,4 +15,10 @@ build/
 .vscode/
 *.log
 data/*.csv
+data/llm_cache/
 .firecrawl/
+
+# Корневые PDF — версионируем только копии в docs/
+/backtest-report-v3.pdf
+/crypto-bot-update-v2.pdf
+/crypto-bot-v3-readme.pdf

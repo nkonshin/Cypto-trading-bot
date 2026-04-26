@@ -77,6 +77,32 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
             CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy);
             CREATE INDEX IF NOT EXISTS idx_balance_timestamp ON balance_history(timestamp);
+
+            -- Пользователи бота (v3)
+            CREATE TABLE IF NOT EXISTS users (
+                telegram_id INTEGER PRIMARY KEY,
+                username TEXT,
+                display_name TEXT,
+                is_admin INTEGER DEFAULT 0,
+                added_by INTEGER,
+                added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                active INTEGER DEFAULT 1
+            );
+
+            -- Подписки пользователей на стратегии
+            -- subscribed_at: с какого момента пользователь видит сделки стратегии
+            -- individual_balance: персональный виртуальный баланс с момента подписки
+            CREATE TABLE IF NOT EXISTS user_subscriptions (
+                telegram_id INTEGER NOT NULL,
+                account_id TEXT NOT NULL,
+                subscribed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                initial_balance REAL DEFAULT 10000,
+                from_start INTEGER DEFAULT 0,
+                PRIMARY KEY (telegram_id, account_id),
+                FOREIGN KEY (telegram_id) REFERENCES users(telegram_id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_subs_account ON user_subscriptions(account_id);
         """)
         await self._db.commit()
 
@@ -221,6 +247,102 @@ class Database:
             return json.loads(row["value"])
         except (json.JSONDecodeError, TypeError):
             return row["value"]
+
+    # === Users (v3) ===
+
+    async def add_user(self, telegram_id: int, username: Optional[str] = None,
+                       display_name: Optional[str] = None, is_admin: bool = False,
+                       added_by: Optional[int] = None) -> bool:
+        """Добавляет пользователя. Возвращает True если добавлен, False если уже существует."""
+        try:
+            await self._db.execute(
+                "INSERT INTO users (telegram_id, username, display_name, is_admin, added_by) VALUES (?, ?, ?, ?, ?)",
+                (telegram_id, username, display_name, 1 if is_admin else 0, added_by),
+            )
+            await self._db.commit()
+            return True
+        except Exception:
+            return False
+
+    async def remove_user(self, telegram_id: int) -> None:
+        """Деактивирует пользователя (не удаляет для аудита)."""
+        await self._db.execute("UPDATE users SET active = 0 WHERE telegram_id = ?", (telegram_id,))
+        await self._db.execute("DELETE FROM user_subscriptions WHERE telegram_id = ?", (telegram_id,))
+        await self._db.commit()
+
+    async def get_user(self, telegram_id: int) -> Optional[dict]:
+        cursor = await self._db.execute(
+            "SELECT * FROM users WHERE telegram_id = ? AND active = 1", (telegram_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_users(self, include_inactive: bool = False) -> list[dict]:
+        if include_inactive:
+            cursor = await self._db.execute("SELECT * FROM users ORDER BY added_at DESC")
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM users WHERE active = 1 ORDER BY added_at DESC"
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_user_info(self, telegram_id: int, username: Optional[str] = None,
+                                display_name: Optional[str] = None) -> None:
+        if username is not None:
+            await self._db.execute(
+                "UPDATE users SET username = ? WHERE telegram_id = ?", (username, telegram_id)
+            )
+        if display_name is not None:
+            await self._db.execute(
+                "UPDATE users SET display_name = ? WHERE telegram_id = ?", (display_name, telegram_id)
+            )
+        await self._db.commit()
+
+    # === Subscriptions ===
+
+    async def subscribe(self, telegram_id: int, account_id: str,
+                        initial_balance: float = 10000.0, from_start: bool = False) -> None:
+        """Подписывает пользователя на стратегию."""
+        await self._db.execute(
+            """INSERT OR REPLACE INTO user_subscriptions
+               (telegram_id, account_id, initial_balance, from_start) VALUES (?, ?, ?, ?)""",
+            (telegram_id, account_id, initial_balance, 1 if from_start else 0),
+        )
+        await self._db.commit()
+
+    async def unsubscribe(self, telegram_id: int, account_id: str) -> None:
+        await self._db.execute(
+            "DELETE FROM user_subscriptions WHERE telegram_id = ? AND account_id = ?",
+            (telegram_id, account_id),
+        )
+        await self._db.commit()
+
+    async def get_subscribers(self, account_id: str) -> list[int]:
+        """Возвращает telegram_id всех активных подписчиков на стратегию."""
+        cursor = await self._db.execute(
+            """SELECT s.telegram_id FROM user_subscriptions s
+               JOIN users u ON u.telegram_id = s.telegram_id
+               WHERE s.account_id = ? AND u.active = 1""",
+            (account_id,),
+        )
+        rows = await cursor.fetchall()
+        return [r["telegram_id"] for r in rows]
+
+    async def get_user_subscriptions(self, telegram_id: int) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT * FROM user_subscriptions WHERE telegram_id = ?", (telegram_id,)
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_subscription(self, telegram_id: int, account_id: str) -> Optional[dict]:
+        cursor = await self._db.execute(
+            "SELECT * FROM user_subscriptions WHERE telegram_id = ? AND account_id = ?",
+            (telegram_id, account_id),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
 
     # === Signals ===
 

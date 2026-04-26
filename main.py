@@ -144,6 +144,99 @@ async def run_trading_loop(engine: TradingEngine, telegram: TelegramBot = None,
         await asyncio.sleep(interval)
 
 
+async def _migrate_users_v3(db, settings, main_user_id):
+    """Миграция: переносим TELEGRAM_ALLOWED_USERS из .env в БД при первом запуске v3."""
+    from bot.paper_trader import LIVE_PAPER_CONFIGS
+
+    # Если уже есть пользователи — пропускаем миграцию
+    existing = await db.list_users()
+    if existing:
+        logger.info(f"v3 users: найдено {len(existing)} пользователей в БД, миграция пропущена")
+        return
+
+    logger.info("v3 migration: переносим пользователей из .env в БД")
+
+    # Main user — admin, подписан на всё
+    if main_user_id:
+        await db.add_user(
+            telegram_id=main_user_id, display_name="Main Admin",
+            is_admin=True, added_by=None,
+        )
+        for cfg in LIVE_PAPER_CONFIGS:
+            await db.subscribe(main_user_id, cfg["account_id"], initial_balance=10000.0, from_start=True)
+        logger.info(f"v3: main admin {main_user_id} добавлен, подписан на все стратегии")
+
+    # Остальные пользователи — подписаны только на signal (notify_users=all в конфиге)
+    signal_accounts = [cfg["account_id"] for cfg in LIVE_PAPER_CONFIGS if cfg.get("notify_users") == "all"]
+    for uid in settings.allowed_user_ids:
+        if uid == main_user_id:
+            continue
+        await db.add_user(telegram_id=uid, added_by=main_user_id)
+        for acc_id in signal_accounts:
+            await db.subscribe(uid, acc_id, initial_balance=10000.0, from_start=False)
+        logger.info(f"v3: user {uid} добавлен, подписан на {len(signal_accounts)} signal-стратегий")
+
+
+async def _health_monitor_loop(paper_trader, notify_user_fn, admin_uid):
+    """
+    Раз в час проверяет health_check. Если есть проблемы — алерт админу.
+    Алерт не дублируется: если проблема та же что в прошлый раз — не шлём повторно.
+    """
+    if not admin_uid:
+        logger.warning("Health monitor: admin_uid не задан, алерты не будут отправляться")
+        return
+
+    await asyncio.sleep(300)  # Первая проверка через 5 минут после старта (дать стратегиям время)
+
+    last_alert_issues: set = set()
+    last_alert_sent_at = None
+
+    while True:
+        try:
+            hc = paper_trader.health_check()
+            current_issues = set(hc["issues"])
+
+            if current_issues:
+                # Алерт если: новые проблемы ИЛИ прошло >6 часов с последнего алерта
+                new_issues = current_issues - last_alert_issues
+                from datetime import datetime, timedelta
+                now = datetime.utcnow()
+                time_since_last = (now - last_alert_sent_at) if last_alert_sent_at else timedelta(days=999)
+                should_alert = bool(new_issues) or time_since_last > timedelta(hours=6)
+
+                if should_alert:
+                    msg = "⚠️ ALERT — обнаружены проблемы в работе бота\n"
+                    msg += "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    for issue in hc["issues"]:
+                        msg += f"• {issue}\n"
+                    msg += "\nПроверь логи на сервере или нажми «📈 Мониторинг» в админ-панели."
+                    try:
+                        await notify_user_fn(admin_uid, msg)
+                        last_alert_sent_at = now
+                        last_alert_issues = current_issues
+                        logger.warning(f"Health monitor: отправлен алерт админу ({len(hc['issues'])} проблем)")
+                    except Exception as e:
+                        logger.error(f"Health monitor: не удалось отправить алерт: {e}")
+            else:
+                # Если ранее был алерт, и сейчас всё ок — сообщаем о восстановлении
+                if last_alert_issues:
+                    msg = "✅ Восстановление — проблемы устранены\n━━━━━━━━━━━━━━━━━━━━\nБот снова работает штатно."
+                    try:
+                        await notify_user_fn(admin_uid, msg)
+                        logger.info("Health monitor: отправлено уведомление о восстановлении")
+                    except Exception as e:
+                        logger.error(f"Health monitor: recovery notify fail: {e}")
+                    last_alert_issues = set()
+                    last_alert_sent_at = None
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Health monitor error: {e}", exc_info=True)
+
+        await asyncio.sleep(3600)  # Раз в час
+
+
 async def run_with_telegram(engine: TradingEngine) -> None:
     """Запуск с Telegram ботом + Paper Trader."""
     telegram = TelegramBot(settings, engine)
@@ -159,15 +252,21 @@ async def run_with_telegram(engine: TradingEngine) -> None:
     paper_db = Database(settings.db_path)
     await paper_db.connect()
 
-    async def notify_all(text: str):
-        """Отправляет уведомление всем пользователям."""
-        for user_id in settings.allowed_user_ids:
-            try:
-                await app.bot.send_message(chat_id=user_id, text=text)
-            except Exception as e:
-                logger.error(f"Ошибка отправки {user_id}: {e}")
+    main_user_id = settings.main_user_id
 
-    paper_trader = PaperTrader(db=paper_db, notify_callback=notify_all)
+    async def notify_user(user_id: int, text: str):
+        """Отправляет уведомление конкретному пользователю."""
+        try:
+            await app.bot.send_message(chat_id=user_id, text=text)
+        except Exception as e:
+            logger.error(f"Ошибка отправки {user_id}: {e}")
+
+    paper_trader = PaperTrader(db=paper_db, notify_user_callback=notify_user)
+
+    # Миграция .env → БД при первом запуске v3
+    # Главный юзер (я) — admin, подписан на все стратегии
+    # Остальные из TELEGRAM_ALLOWED_USERS — подписаны только на signal-стратегии
+    await _migrate_users_v3(paper_db, settings, main_user_id)
 
     # Сохраняем paper_trader в engine для доступа из Telegram UI
     engine.paper_trader = paper_trader
@@ -182,9 +281,14 @@ async def run_with_telegram(engine: TradingEngine) -> None:
         paper_task = asyncio.create_task(paper_trader.run(), name="paper_trader")
         logger.info("Paper Trader запущен параллельно")
 
+        # Health monitor: раз в час проверяет состояние и алертит админу
+        monitor_task = asyncio.create_task(
+            _health_monitor_loop(paper_trader, notify_user, main_user_id),
+            name="health_monitor",
+        )
+        logger.info("Health monitor запущен (раз в час)")
+
         try:
-            # Paper Trader делает всю торговлю,
-            # основной цикл просто держит бота живым
             while engine._running:
                 await asyncio.sleep(60)
         except (KeyboardInterrupt, asyncio.CancelledError):
@@ -192,6 +296,7 @@ async def run_with_telegram(engine: TradingEngine) -> None:
         finally:
             await paper_trader.stop()
             paper_task.cancel()
+            monitor_task.cancel()
             await paper_db.close()
             await app.updater.stop()
             await app.stop()

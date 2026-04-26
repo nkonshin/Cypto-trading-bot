@@ -44,7 +44,8 @@ class StrategyName(str, Enum):
 class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = ""
-    telegram_allowed_users: str = ""  # comma-separated user IDs
+    telegram_allowed_users: str = ""  # comma-separated user IDs (все получают signal-стратегии)
+    telegram_main_user: str = ""  # основной пользователь — получает также test-стратегии
 
     # OpenAI
     openai_api_key: str = ""
@@ -92,7 +93,18 @@ class Settings(BaseSettings):
     def allowed_user_ids(self) -> list[int]:
         if not self.telegram_allowed_users:
             return []
-        return [int(uid.strip()) for uid in self.telegram_allowed_users.split(",") if uid.strip()]
+        # Поддержка и запятых, и пробелов как разделителей
+        raw = self.telegram_allowed_users.replace(",", " ")
+        return [int(uid.strip()) for uid in raw.split() if uid.strip()]
+
+    @property
+    def main_user_id(self) -> Optional[int]:
+        if not self.telegram_main_user:
+            return self.allowed_user_ids[0] if self.allowed_user_ids else None
+        try:
+            return int(self.telegram_main_user.strip())
+        except (ValueError, AttributeError):
+            return None
 
     def get_risk_params(self) -> dict:
         """Возвращает параметры риска в зависимости от уровня."""
