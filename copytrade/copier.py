@@ -70,6 +70,15 @@ class Copier:
     def _m(self, text: str, buttons=()) -> Msg:
         return Msg(self._tag() + text, tuple(buttons))
 
+    def dump(self) -> dict:
+        """Наши копии — для сохранения на диск: после перезапуска бот должен помнить, что открывал он."""
+        return {raw: {"side": st.side, "expected": st.expected, "detached": st.detached, "stop_ids": list(st.stop_ids)}
+                for raw, st in self.syms.items()}
+
+    def restore(self, data: dict) -> None:
+        self.syms = {raw: SymState(v.get("side"), float(v.get("expected", 0)), bool(v.get("detached")),
+                                   list(v.get("stop_ids") or [])) for raw, v in (data or {}).items()}
+
     def managed(self, raw: str) -> bool:
         st = self.syms.get(raw)
         return st is not None and not st.detached

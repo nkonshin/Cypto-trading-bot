@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -83,7 +84,8 @@ class App:
         self.our_equity = None
         self.blind_alerted = False
         self.offline_alerted = False
-        self.done_commands = set()
+        # команды, лежавшие до запуска, не выполняем повторно (например «закрыть копии» перед рестартом)
+        self.done_commands = {c.get("id") for c in self.settings.get("commands") or []}
         self.started = time.time()
         self.retry_at = 0.0
         self.mode_failed = False
@@ -150,12 +152,41 @@ class App:
             self.mode_failed = False
             self.mode = None
         prev, self.mode = self.mode, mode
+        self.load_copies()
         await self.tg.send(f"Режим копирования: {MODE_NAMES[mode]}. Множитель {self.settings['mult']}"
                            + ("" if prev is None else f" (было: {prev})"))
         if self.copier and self.tracker.confirmed is not None and not is_paused(self.settings):
             await self._send(await self.copier.resync(self.rast_now(), await self.k_now(), "Сверка позиций:"))
 
+    def _state_file(self) -> str:
+        return os.path.join(shared.DATA_DIR, f"copies_{self.mode}.json")
+
+    def save_copies(self) -> None:
+        if self.copier is None or self.mode not in ("demo", "live"):
+            return
+        try:
+            tmp = self._state_file() + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.copier.dump(), f)
+            os.replace(tmp, self._state_file())
+        except Exception as e:
+            log.warning("save_copies: %r", e)
+
+    def load_copies(self) -> None:
+        """Только для demo/live: позиции на бирже переживают перезапуск, значит и учёт копий должен."""
+        if self.copier is None or self.mode not in ("demo", "live"):
+            return
+        try:
+            with open(self._state_file(), encoding="utf-8") as f:
+                self.copier.restore(json.load(f))
+            log.info("восстановлены копии: %s", list(self.copier.syms))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log.warning("load_copies: %r", e)
+
     async def _send(self, msgs) -> None:
+        self.save_copies()
         for m in msgs:
             m = m if isinstance(m, Msg) else Msg(str(m))
             self.events.append({"t": time.time(), "text": m.text})

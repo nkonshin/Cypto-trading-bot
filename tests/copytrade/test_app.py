@@ -94,3 +94,27 @@ def test_old_commands_are_not_replayed_after_restart(app):
     asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))
     asyncio.run(app.apply_settings())
     assert app.adapter.positions[BTC][1] > 0         # часовой давности close_all не выполнился
+
+
+def test_copies_survive_restart_in_live_modes(app, tmp_path):
+    from copytrade import main as m
+    asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))
+    app.mode = "demo"                              # делаем вид, что это биржевой режим
+    app.save_copies()
+    fresh = m.App(source=object(), reader=object(), notifier=FakeTG())
+    asyncio.run(fresh.set_mode("notify"))
+    fresh.mode = "demo"
+    fresh.load_copies()
+    assert fresh.copier.syms["BTCUSDT"].expected == 0.0888
+    # после перезапуска сверка не предлагает «Открыть» поверх уже открытой копии
+    fresh.adapter.positions["BTC/USDT:USDT"] = ("short", 0.0888)
+    msgs = asyncio.run(fresh.copier.resync({"BTCUSDT": P()}, 0.2, "Сверка:"))
+    assert len(msgs) == 1 and "копия на месте" in msgs[0].text
+
+
+def test_commands_from_before_start_are_not_executed(tmp_path, monkeypatch):
+    monkeypatch.setattr(shared, "DATA_DIR", str(tmp_path))
+    shared.add_command("close_all")                        # нажали перед перезапуском
+    from copytrade import main as m
+    a = m.App(source=object(), reader=object(), notifier=FakeTG())
+    assert shared.load_settings()["commands"][0]["id"] in a.done_commands
