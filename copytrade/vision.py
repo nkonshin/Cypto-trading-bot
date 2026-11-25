@@ -9,7 +9,8 @@ import cv2
 import numpy as np
 
 from copytrade.model import Box, Pos, Reading
-from copytrade.parse import (find_cards, parse_balance, parse_card, parse_tab, parse_tpsl, valid_tpsl)
+from copytrade.parse import (find_cards, parse_balance, parse_card, parse_form, parse_number, parse_tab,
+                             parse_tpsl, valid_tpsl)
 
 REF_W, REF_H = 1720, 720
 # Координаты в эталонной раскладке (кадр short_btc_a). Панель «плавает» по вертикали, когда Раст меняет
@@ -20,6 +21,9 @@ ANCHOR_MIN_SCORE = 0.8
 PANEL = (275, 428, 350, 140)      # вкладки + первая карточка до ряда средней цены (эталон)
 TPSL_DX, TPSL_DY, TPSL_W, TPSL_H = 165, 84, 185, 18   # строка TP/SL от левого края панели / от строки монеты
 BALANCE = (275, 622, 200, 50)     # «Assets Value» (не двигается)
+FORM_HEADER = (280, 95, 120, 16)  # «BTCUSDT Perpetual» над формой ордера (не двигается)
+FORM_LEV = (420, 145, 200, 25)    # «Isolated  50X» в форме ордера (не двигается)
+SIZE_DX, SIZE_DY, SIZE_W, SIZE_H = 0, 38, 70, 16       # значение объёма от левого края панели / строки монеты
 PANEL_SCALE, TPSL_SCALE, BAL_SCALE = 2, 4, 3
 PAD = 16
 _TEMPLATE = cv2.imread(os.path.join(os.path.dirname(__file__), "assets", "tabs_anchor.png"), cv2.IMREAD_GRAYSCALE)
@@ -106,7 +110,11 @@ class PanelReader:
         if len(cards) != 1:
             return Reading(False, (), n, balance, "карточка позиции не найдена", now)
         sym_box, symbol = cards[0]
-        pos, why = parse_card(boxes, sym_box, symbol)
+        # объём второй раз — отдельной вырезкой ×4: два независимых чтения должны совпасть
+        sb = self.ocr_boxes(frame, (px0 + SIZE_DX, py0 + sym_box.y + SIZE_DY, SIZE_W, SIZE_H), 4)
+        size_x4 = next((parse_number(b.text) for b in sb if b.conf >= 0.85 and parse_number(b.text)), None)
+        form_sym, form_lev = parse_form(self.ocr_boxes(frame, FORM_HEADER, 2), self.ocr_boxes(frame, FORM_LEV, 2))
+        pos, why = parse_card(boxes, sym_box, symbol, size_x4, form_lev if form_sym == symbol else None)
         if pos is None:
             return Reading(False, (), n, balance, why, now)
         side = side_by_color(frame, int(px0 + sym_box.x - 2), int(py0 + sym_box.y + 11))
@@ -119,7 +127,7 @@ class PanelReader:
         if parsed and all(b.conf >= 0.8 for b in tb) and valid_tpsl(side, pos.mark, *parsed):
             tp, sl = parsed
             known = True
-        pos = Pos(pos.symbol, side, pos.size, pos.avg, pos.margin, pos.mark, tp, sl, known)
+        pos = Pos(pos.symbol, side, pos.size, pos.avg, pos.margin, pos.mark, tp, sl, known, pos.lev)
         return Reading(True, (pos,), n, balance, "", now)
 
 

@@ -215,7 +215,7 @@ def offer_id(msg, yes=True):
 def test_confirm_mode_btc_open_waits_for_button():
     ad, c = make()
     (m,) = run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.4, margin=474.1)), 0.2, auto=False))
-    assert BTC not in ad.positions and "Копируем?" in m.text and "~0.08" in m.text
+    assert BTC not in ad.positions and "Копируем?" in m.text and "SHORT 0.08 BTC (~$4 727), маржа ~$95 при 50x" in m.text
     out = run(c.answer_offer(offer_id(m), True, {"BTCUSDT": P(size=0.4, margin=474.1)}, 0.15))
     assert ad.positions[BTC] == ("short", 0.06)                # k на момент нажатия
     assert out[0].text.startswith("✅ Готово") and "открыл SHORT 0.06" in out[0].text

@@ -31,7 +31,22 @@ class Tracker:
             return float("inf")
         return (now or time.time()) - self.last_ok
 
+    def _size_changed_without_margin(self, r: Reading) -> bool:
+        """Изолированная маржа: объём не может измениться, а маржа остаться прежней — значит, OCR ошибся."""
+        if not self.confirmed:
+            return False
+        for p in r.positions:
+            c = self.confirmed.get(p.symbol)
+            if c is None or c.side != p.side or not (c.margin and p.margin):
+                continue
+            if abs(p.size - c.size) > 1e-9 and abs(p.margin - c.margin) <= c.margin * 0.002:
+                return True
+        return False
+
     def update(self, r: Reading) -> list:
+        if r.ok and self._size_changed_without_margin(r):
+            r = Reading(False, r.positions, r.n_tab, r.balance, "объём изменился без изменения маржи — ошибка OCR",
+                        r.ts)
         self.last_reading = r
         if not r.ok:
             self._cand_key, self._cand_n = None, 0

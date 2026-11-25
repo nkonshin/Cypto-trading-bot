@@ -1,6 +1,6 @@
 from copytrade.model import Box, Pos
-from copytrade.parse import (find_cards, parse_balance, parse_card, parse_number, parse_tab, parse_tpsl,
-                             valid_tpsl)
+from copytrade.parse import (find_cards, parse_balance, parse_card, parse_form, parse_number, parse_tab,
+                             parse_tpsl, valid_tpsl)
 
 
 def B(x, y, text, conf=0.99):
@@ -129,3 +129,29 @@ def test_leverage_without_margin_is_unknown():
 def test_parse_balance():
     assert parse_balance([B(2, 6, "AssetsVahue", 0.93), B(2, 26, "748.7413USDT-", 0.95), B(90, 26, "$748.74")]) == 748.7413
     assert parse_balance([B(2, 26, "748.7413USDT-", 0.6)]) is None
+
+
+
+def test_form_leverage_catches_digit_substitution():
+    """0.4 → 0.6 даёт 73x — близко к стандартным 75x, но плечо в форме 50x: чтение отбрасывается."""
+    card = [B(7, 53, "BTCUSDTPerpetual>"), B(7, 83, "Posons (BTC)", 0.74), B(6, 94, "0.6000", 0.95),
+            B(120, 94, "486.1696"), B(7, 110, "Average PositionPrice"), B(7, 121, "58,967.2"), B(120, 121, "58,666.1")]
+    (sb, sym), = find_cards(card)
+    assert parse_card(card, sb, sym)[0] is not None                     # без плеча формы прошло бы как 75x
+    p, why = parse_card(card, sb, sym, form_lev=50)
+    assert p is None and "50x" in why
+    ok = [b if b.text != "0.6000" else b._replace(text="0.4000") for b in card]
+    p, _ = parse_card(ok, sb, sym, form_lev=50)
+    assert p.size == 0.4 and p.leverage == 50
+
+
+def test_two_size_reads_must_agree():
+    (sb, sym), = find_cards(CARD)
+    p, why = parse_card(CARD, sb, sym, size_x4=0.3)
+    assert p is None and "по-разному" in why
+    assert parse_card(CARD, sb, sym, size_x4=0.2)[0].size == 0.2
+
+
+def test_parse_form():
+    assert parse_form([B(0, 0, "BTCUSDTPerpetual")], [B(0, 0, "lsolated", 0.96), B(90, 0, "50X", 0.92)]) == ("BTCUSDT", 50)
+    assert parse_form([B(0, 0, "ETHUSOT Perpetual")], [B(90, 0, "20X", 0.6)]) == ("ETHUSDT", None)

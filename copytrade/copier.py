@@ -50,10 +50,23 @@ def fmt(v: Optional[float]) -> str:
     return f"{v:,.4f}".rstrip("0").rstrip(".").replace(",", " ")
 
 
+def usd(amount: Optional[float], price: Optional[float]) -> str:
+    """Номинал в долларах: «~$23 587»."""
+    if not amount or not price:
+        return ""
+    return f"~${amount * price:,.0f}".replace(",", " ")
+
+
+def qty(raw: str, amount: float, price: Optional[float]) -> str:
+    """«0.4 BTC (~$23 587)»."""
+    d = usd(amount, price)
+    return f"{fmt(amount)} {raw[:-4]}" + (f" ({d})" if d else "")
+
+
 def desc(p: Pos) -> str:
     lev = f" ({p.leverage}x)" if p.leverage else ""
     stops = f", TP {fmt(p.tp)} / SL {fmt(p.sl)}" if p.tpsl_known and (p.tp or p.sl) else ""
-    return f"{p.side.upper()} {p.symbol} {fmt(p.size)} по {fmt(p.avg)}{lev}{stops}"
+    return f"{p.side.upper()} {p.symbol} {qty(p.symbol, p.size, p.avg)} по {fmt(p.avg)}{lev}{stops}"
 
 
 class Copier:
@@ -123,7 +136,11 @@ class Copier:
     def _estimate(self, p: Pos, k: Optional[float]) -> str:
         if not k:
             return "объём посчитаю в момент нажатия"
-        return f"у тебя будет {p.side.upper()} ~{fmt(floor_step(p.size * k, self._step(p.symbol)))} (k={k:.3f})"
+        amt = floor_step(p.size * k, self._step(p.symbol))
+        px = p.mark or p.avg
+        lev = min(p.leverage or self.default_leverage, self.max_leverage)
+        margin = (", маржа ~$" + f"{amt * px / lev:,.0f}".replace(",", " ") + f" при {lev}x") if px else ""
+        return f"у тебя будет {p.side.upper()} {qty(p.symbol, amt, px)}{margin} (k={k:.3f})"
 
     # ---------- события ----------
     async def on_event(self, ev: Event, k: Optional[float], auto: bool = True) -> list:
@@ -155,7 +172,7 @@ class Copier:
             return [self._offer("sync", s, f"{head}\nКопируем? {self._estimate(b, k)}.")]
         if ev.kind == "close":
             return [self._offer("close", s, f"Раст закрыл {s}. Закрыть твою копию "
-                                            f"({st.side.upper()} {fmt(st.expected)}) по рынку?",
+                                            f"({st.side.upper()} {qty(s, st.expected, a.mark or a.avg)}) по рынку?",
                                 no="Оставить себе")]
         if ev.kind in ("increase", "decrease"):
             verb = "добавил" if ev.kind == "increase" else "сократил"
@@ -163,8 +180,10 @@ class Copier:
                 after = st.expected + floor_step((b.size - st.his_size) * (k or 0), self._step(s))
             else:
                 after = floor_step(st.expected * b.size / st.his_size, self._step(s)) if st.his_size else st.expected
-            return [self._offer("sync", s, f"Раст {verb} {s}: {fmt(a.size)} → {fmt(b.size)}.\n"
-                                           f"Делаем? Твоя копия станет ~{fmt(after)} (сейчас {fmt(st.expected)}).")]
+            px = b.mark or b.avg
+            return [self._offer("sync", s, f"Раст {verb} {s}: {qty(s, a.size, px)} → {qty(s, b.size, px)}.\n"
+                                           f"Делаем? Твоя копия станет ~{qty(s, after, px)} "
+                                           f"(сейчас {qty(s, st.expected, px)}).")]
         if ev.kind == "tpsl":
             return [self._offer("sync", s, f"Раст переставил {s}: TP {fmt(b.tp)} / SL {fmt(b.sl)}.\n"
                                            f"Переставить у тебя так же?")]
@@ -268,8 +287,9 @@ class Copier:
             return [self._m(f"{his}\n→ ОШИБКА открытия: {e}")]
         self.syms[p.symbol] = SymState(p.side, amount, his_size=p.size)
         note = " (ужал под маржу)" if cut else ""
-        msgs = [self._m(f"{his}\n→ открыл {p.side.upper()} {fmt(amount)} по ~{fmt(fill)} (k={k:.3f}, {lev}x), "
-                        f"маржа ~{fmt(amount * fill / lev)} USDT{note}")]
+        margin = f"{amount * fill / lev:,.0f}".replace(",", " ")
+        msgs = [self._m(f"{his}\n→ открыл {p.side.upper()} {qty(p.symbol, amount, fill)} по ~{fmt(fill)} "
+                        f"(k={k:.3f}, {lev}x), маржа ~${margin}{note}")]
         if p.tpsl_known and (p.tp or p.sl):
             msgs += await self._tpsl(p)
         return msgs
@@ -292,7 +312,7 @@ class Copier:
         self.syms.pop(raw, None)
         if amt <= 0:
             return [self._m(f"{head}\n→ у тебя копии уже не было (закрылась стопом?).")]
-        return [self._m(f"{head}\n→ закрыл {(side or '').upper()} {fmt(amt)} по ~{fmt(fill)}")]
+        return [self._m(f"{head}\n→ закрыл {(side or '').upper()} {qty(raw, amt, fill)} по ~{fmt(fill)}")]
 
     async def _check_drift(self, raw: str, info) -> Optional[str]:
         st = self.syms.get(raw)
@@ -329,7 +349,8 @@ class Copier:
             return [self._m(f"{head}\n→ ОШИБКА добавки: {e}")]
         st.expected = round(st.expected + add, 10)
         st.his_size = his.size
-        msgs = [self._m(f"{head}\n→ добавил {fmt(add)} по ~{fmt(fill)}, теперь {fmt(st.expected)}")]
+        msgs = [self._m(f"{head}\n→ добавил {qty(raw, add, fill)} по ~{fmt(fill)}, "
+                        f"теперь {qty(raw, st.expected, fill)}")]
         if st.stop_ids:
             msgs += await self._tpsl(his, quiet=True, force=True)
         return msgs
@@ -349,7 +370,8 @@ class Copier:
             return [self._m(f"{head}\n→ ОШИБКА сокращения: {e}")]
         st.expected = round(st.expected - cut_amt, 10)
         st.his_size = his.size
-        msgs = [self._m(f"{head}\n→ сократил на {fmt(cut_amt)} по ~{fmt(fill)}, осталось {fmt(st.expected)}")]
+        msgs = [self._m(f"{head}\n→ сократил на {qty(raw, cut_amt, fill)} по ~{fmt(fill)}, "
+                        f"осталось {qty(raw, st.expected, fill)}")]
         if st.stop_ids:
             msgs += await self._tpsl(his, quiet=True, force=True)
         return msgs

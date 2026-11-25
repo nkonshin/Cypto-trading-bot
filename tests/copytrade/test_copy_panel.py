@@ -114,7 +114,7 @@ def test_status_text_renders_live_status():
                          "his_balance": 815.6503, "our_positions": [], "our_equity": 200.0, "k": 0.2452,
                          "events": [{"t": time.time(), "text": "Вижу панель Раста"}]})
     t = status_text()
-    assert "Раст: SHORT BTCUSDT 0.4 по 59 345 (50x) · TP 54 321 / SL 59 600" in t
+    assert "Раст: SHORT BTCUSDT 0.4 BTC (~$23 738) по 59 345 (50x) · TP 54 321 / SL 59 600" in t
     assert "Баланс: его 815.65 · твой 200 USDT · k сейчас 0.245" in t
     shared.save_settings(paused_until=-1)
     assert "на паузе без срока" in status_text()

@@ -47,6 +47,7 @@ GOLDEN = {   # кадр → (сторона, объём, средняя) — ч�
     "srv_short_04_unit_glitch": ("short", 0.4, 59345.0),    # подпись «Poions 0BTC)»
     "srv_short_04_usot_glitch": ("short", 0.4, 59345.0),    # монета «BTCUSOT»
     "srv_short_04_lowconf": ("short", 0.4, 58967.2),        # объём «0.4000» с conf 0.84 — бот слеп 24 мин
+    "srv_short_04_read_as_06": ("short", 0.4, 58967.2),     # сервер дважды прочитал «0.6000»
 }
 
 

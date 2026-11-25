@@ -63,13 +63,19 @@ def status_text() -> str:
     for p in his:
         lev = f" ({p['leverage']}x)" if p.get("leverage") else ""
         tpsl = f" · TP {_f(p.get('tp'), 1)} / SL {_f(p.get('sl'), 1)}" if (p.get("tp") or p.get("sl")) else ""
-        lines.append(f"Раст: {p['side'].upper()} {p['symbol']} {_f(p['size'])} по {_f(p.get('avg'), 1)}{lev}{tpsl}")
+        usd = f" (~${p['size'] * p['avg']:,.0f})".replace(",", " ") if p.get("avg") else ""
+        lines.append(f"Раст: {p['side'].upper()} {p['symbol']} {_f(p['size'])} {p['symbol'][:-4]}{usd} "
+                     f"по {_f(p.get('avg'), 1)}{lev}{tpsl}")
     if not his:
         lines.append("Раст: позиций нет")
     ours = st.get("our_positions") or []
+    prices = {p["symbol"]: p.get("avg") for p in his}
     for p in ours:
         flag = " (отцеплена — не трогаю)" if p.get("detached") else ""
-        lines.append(f"Копия: {(p.get('side') or '').upper()} {p['symbol']} {_f(p.get('amount'))}{flag}")
+        px = prices.get(p["symbol"])
+        usd = f" (~${p['amount'] * px:,.0f})".replace(",", " ") if px and p.get("amount") else ""
+        lines.append(f"Копия: {(p.get('side') or '').upper()} {p['symbol']} {_f(p.get('amount'))} "
+                     f"{p['symbol'][:-4]}{usd}{flag}")
     if not ours:
         lines.append("Копий нет")
     lines.append(f"Баланс: его {_f(st.get('his_balance'), 2)} · твой {_f(st.get('our_equity'), 2)} USDT"

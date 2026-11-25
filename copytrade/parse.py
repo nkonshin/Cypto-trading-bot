@@ -116,7 +116,27 @@ def find_cards(boxes) -> list:
     return sorted(cards, key=lambda c: c[0].y)
 
 
-def parse_card(boxes, sym_box: Box, symbol: str):
+_LEV = re.compile(r"(\d{1,3})\s*[xXхХ]")
+
+
+def parse_form(header_boxes, lev_boxes):
+    """(монета формы ордера | None, плечо формы | None)."""
+    sym = None
+    for b in header_boxes:
+        t = re.sub(r"[^A-Z0-9]", "", norm(b.text).upper().split("PERP")[0])
+        t = re.sub(r"US[DO0Q][T7I1]$", "USDT", t)
+        if _SYMBOL.match(t):
+            sym = t
+            break
+    lev = None
+    for b in lev_boxes:
+        m = _LEV.search(norm(b.text))
+        if m and b.conf >= 0.8 and 1 <= int(m.group(1)) <= 125:
+            lev = int(m.group(1))
+    return sym, lev
+
+
+def parse_card(boxes, sym_box: Box, symbol: str, size_x4: Optional[float] = None, form_lev: Optional[int] = None):
     """(Pos без стороны/TP-SL | None, причина). Объём, средняя и маржа обязаны сходиться в стандартное плечо —
     это главная защита от ошибок OCR («0.4000» → «04000»)."""
     if not _SYMBOL.match(symbol):
@@ -139,18 +159,27 @@ def parse_card(boxes, sym_box: Box, symbol: str):
     row2 = _row_below(boxes, avg_label)
     avg = _num_in(row2, 0, 60, 0.85)
     mark = _num_in(row2, 90, 200, 0.85)
+    if size_x4 is not None:
+        if size is not None and abs(size - size_x4) > 1e-9:
+            return None, f"объём прочитан по-разному ({size} и {size_x4})"
+        size = size_x4
     if size is None or size <= 0:
         return None, "объём не прочитан"
     if avg is None:
         return None, "средняя цена не прочитана"
     if margin is None:
         return None, "маржа не прочитана"
+    if mark is not None and not (0.7 * avg < mark < 1.3 * avg):
+        mark = None
+    if form_lev:
+        # плечо из формы известно: номинал/маржа обязаны сходиться именно с ним (добавленная маржа — ниже)
+        implied = size * avg / margin
+        if not (0.5 * form_lev <= implied <= 1.12 * form_lev):
+            return None, f"объём/цена/маржа не сходятся с плечом {form_lev}x ({size} × {avg} / {margin})"
+        return Pos(symbol=symbol, side="", size=size, avg=avg, margin=margin, mark=mark, lev=form_lev), ""
     pos = Pos(symbol=symbol, side="", size=size, avg=avg, margin=margin, mark=mark)
     if pos.leverage is None:
         return None, f"объём/цена/маржа не сходятся ({size} × {avg} / {margin})"
-    if mark is not None and not (0.7 * avg < mark < 1.3 * avg):
-        mark = None
-        pos = Pos(symbol=symbol, side="", size=size, avg=avg, margin=margin, mark=None)
     return pos, ""
 
 

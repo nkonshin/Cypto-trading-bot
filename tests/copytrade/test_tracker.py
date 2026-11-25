@@ -9,7 +9,7 @@ def R(*positions, ts=1.0):
 
 
 def P(side="short", size=0.2, tp=None, sl=None, known=False, sym="BTCUSDT"):
-    return Pos(sym, side, size, 59571.7, 245.5, 59086.1, tp, sl, known)
+    return Pos(sym, side, size, 59571.7, round(size * 59571.7 / 50, 4), 59086.1, tp, sl, known)   # маржа ∝ объёму
 
 
 def kinds(events):
@@ -88,3 +88,15 @@ def test_blind_for():
     assert t.blind_for(130.0) == 30.0
     t.update(BAD)
     assert t.blind_for(160.0) == 60.0
+
+
+
+def test_size_change_without_margin_change_is_ocr_error():
+    """Реальный случай 25.11: на экране 0.4, OCR дважды прочитал 0.6 при той же марже 486.17."""
+    t = Tracker()
+    real = Pos("BTCUSDT", "short", 0.4, 58967.2, 486.1696, 58600.0)
+    t.update(R(real)); t.update(R(real))
+    bad = Pos("BTCUSDT", "short", 0.6, 58967.2, 486.1696, 58600.0)
+    assert t.update(R(bad)) == [] and t.update(R(bad)) == []
+    assert "без изменения маржи" in t.last_reading.reason
+    assert t.confirmed["BTCUSDT"].size == 0.4

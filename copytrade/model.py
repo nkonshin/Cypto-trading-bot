@@ -35,11 +35,14 @@ class Pos:
     tp: Optional[float] = None
     sl: Optional[float] = None
     tpsl_known: bool = False     # False — строку TP/SL не удалось прочитать
+    lev: Optional[int] = None    # плечо из формы ордера (если прочитано и сошлось с объёмом/маржой)
 
     @property
     def leverage(self) -> Optional[int]:
         """Плечо из номинала и маржи, привязанное к ближайшему стандартному значению.
         Не похоже ни на одно стандартное — значит, цифры прочитаны вразнобой: None (берём безопасное)."""
+        if self.lev:
+            return self.lev
         if not (self.avg and self.margin):
             return None
         raw = self.size * self.avg / self.margin
