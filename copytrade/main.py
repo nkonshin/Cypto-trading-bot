@@ -329,6 +329,9 @@ class App:
                 continue                                         # старые команды после перезапуска не выполняем
             if cmd.get("name") == "snapshot":
                 self.write_snapshot(cid)
+            elif cmd.get("name") == "guard" and self.copier:
+                await self._send(self.copier.set_guard((cmd.get("symbol"), cmd.get("side")), cmd.get("no_add"),
+                                                       cmd.get("sl_tighten")))
             elif cmd.get("name") == "close_all" and self.copier:
                 await self._send(await self.copier.close_all() or ["Закрывать нечего: копий нет."])
             elif cmd.get("name") == "enter" and self.copier:
@@ -465,6 +468,7 @@ class App:
         syms = self.copier.syms if self.copier else {}
         for key, st in syms.items():
             ours.append({"symbol": key[0], "side": st.side, "amount": st.expected, "detached": st.detached,
+                         "no_add": st.no_add, "sl_tighten": st.sl_tighten, "tp": st.tp, "sl": st.sl,
                          **self._pnl(key[0], st.side, st.expected, self.exch_pos.get(key) or {})})
         own = [{"symbol": key[0], "side": key[1], "amount": x.get("amount"),
                 **self._pnl(key[0], key[1], x.get("amount"), x)}

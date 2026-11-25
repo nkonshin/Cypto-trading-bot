@@ -5,6 +5,7 @@
 Кнопки уведомлений копировщика (copy:offer:<id>:yes|no) тоже приходят сюда.
 «➕ Войти …» (copy:enter:<монета>:<сторона>) — для позиций Раста без копии: копировщик пришлёт расчёт с кнопками.
 «📸 Кадр» — копировщик пишет последний кадр стрима в copier_data/snapshot.jpg, бот присылает фото.
+Защита копии (copy:guard:<монета>:<сторона>:no_add|sl_tighten:0|1): не доливать за Растом / SL только подтягивать.
 Время везде пермское (UTC+5): серверы живут в UTC.
 """
 from __future__ import annotations
@@ -78,7 +79,7 @@ def status_text() -> str:
     ours = st.get("our_positions") or []
     prices = {p["symbol"]: p.get("avg") for p in his}
     for p in ours:
-        flag = " (отцеплена — не трогаю)" if p.get("detached") else ""
+        flag = " (отцеплена — не трогаю)" if p.get("detached") else guard_text(p, " · ")
         px = prices.get(p["symbol"])
         usd = f" (~${p['amount'] * px:,.0f})".replace(",", " ") if px and p.get("amount") else ""
         lines.append(f"Копия: {(p.get('side') or '').upper()} {p['symbol']} {_f(p.get('amount'))} "
@@ -171,6 +172,10 @@ def status_brief(now: float = None) -> str:
         if c:
             lines.append(("Твоя копия (отцеплена, не трогаю): " if c.get("detached") else "Твоя копия: ")
                          + _mine(c, px))
+            g = guard_text(c) if not c.get("detached") else ""
+            if c.get("tp") or c.get("sl") or g:
+                lines.append(f"Стопы бота: TP {_f(c.get('tp'), 1)} · SL {_f(c.get('sl'), 1)}"
+                             + (f" · 🛡 {g}" if g else ""))
         if o:
             lines.append("У тебя своя, не копия: " + _mine(o, px))
         if not c and not o:
@@ -201,6 +206,27 @@ def status_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def guard_text(p: dict, prefix: str = "") -> str:
+    parts = (["не доливаю"] if p.get("no_add") else []) + (["SL только подтягиваю"] if p.get("sl_tighten") else [])
+    return prefix + " · ".join(parts) if parts else ""
+
+
+def guard_buttons(st: dict) -> list:
+    """Под каждой копией: «не доливать» и «SL только подтягивать» (кнопка ставит именно показанное значение)."""
+    rows = []
+    for p in st.get("our_positions") or []:
+        if p.get("detached"):
+            continue
+        name, base = f"{(p.get('side') or '').upper()} {p['symbol'][:-4]}", f"copy:guard:{p['symbol']}:{p.get('side')}"
+        rows.append([InlineKeyboardButton(f"▶️ {name}: снова доливать" if p.get("no_add")
+                                          else f"🛑 {name}: не доливать",
+                                          callback_data=f"{base}:no_add:{0 if p.get('no_add') else 1}")])
+        rows.append([InlineKeyboardButton(f"↕️ {name}: SL снова за Растом" if p.get("sl_tighten")
+                                          else f"🛡 {name}: SL только подтягивать",
+                                          callback_data=f"{base}:sl_tighten:{0 if p.get('sl_tighten') else 1}")])
+    return rows
+
+
 def enter_buttons(s: dict) -> list:
     """«➕ Войти» по каждой позиции Раста, у которой нет копии (если копировщик жив и не выключен)."""
     st = shared.read_status()
@@ -223,7 +249,9 @@ def keyboard() -> InlineKeyboardMarkup:
                      InlineKeyboardButton("⏸ 4 ч", callback_data="copy:pause:4h"),
                      InlineKeyboardButton("⏸ до 23:00", callback_data="copy:pause:23"),
                      InlineKeyboardButton("⏸ без срока", callback_data="copy:pause:inf")]
-    return InlineKeyboardMarkup(enter_buttons(s) + [
+    st = shared.read_status()
+    alive = s["mode"] != "off" and st and time.time() - st.get("updated", 0) <= 30
+    return InlineKeyboardMarkup(enter_buttons(s) + (guard_buttons(st) if alive else []) + [
         modes,
         pause_row,
         [InlineKeyboardButton("🤖 Авто: ВКЛ (выключить)" if s.get("auto") else "🤖 Авто: выкл (включить)",
@@ -345,7 +373,16 @@ class CopyPanel:
             await q.answer("Беру кадр со стрима…")
             await self._send_shot(q.message)
             return
-        if action == "enter":
+        if action == "guard":                       # copy:guard:<монета>:<сторона>:no_add|sl_tighten:0|1
+            what, val = parts[4], parts[5] == "1"
+            if what not in ("no_add", "sl_tighten"):
+                await q.answer()
+                return
+            shared.add_command("guard", symbol=parts[2], side=parts[3], **{what: val})
+            note = (("Доливки выключаю" if val else "Доливки снова включаю") if what == "no_add"
+                    else ("SL будет только подтягиваться" if val else "SL снова за Растом"))
+            note += f" ({parts[3].upper()} {parts[2]}), подтверждение придёт сообщением"
+        elif action == "enter":
             shared.add_command("enter", symbol=parts[2], side=parts[3])
             note = f"Пришлю расчёт входа в {parts[3].upper()} {parts[2]} с кнопками"
         elif action == "mode":

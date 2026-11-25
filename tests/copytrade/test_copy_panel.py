@@ -313,3 +313,24 @@ def test_shot_reports_silent_copier():
     run(CopyPanel._send_shot(msg, timeout=0.5))
     msg.reply_photo.assert_not_called()
     assert "не ответил" in msg.reply_text.call_args[0][0]
+
+
+def test_guard_buttons_and_command():
+    from telegram_ui.copy_panel import keyboard, status_brief, status_text
+    his_status(ours=[{"symbol": "BTCUSDT", "side": "short", "amount": 0.08, "detached": False,
+                      "no_add": True, "sl_tighten": False, "tp": 55000.0, "sl": 60000.0}])
+    btns = [(b.text, b.callback_data) for row in keyboard().inline_keyboard for b in row
+            if b.callback_data.startswith("copy:guard:")]
+    assert btns == [("▶️ SHORT BTC: снова доливать", "copy:guard:BTCUSDT:short:no_add:0"),
+                    ("🛡 SHORT BTC: SL только подтягивать", "copy:guard:BTCUSDT:short:sl_tighten:1")]
+    assert "Копия: SHORT BTCUSDT 0.08 BTC" in status_text() and "не доливаю" in status_text()
+    assert "Стопы бота: TP 55 000 · SL 60 000 · 🛡 не доливаю" in status_brief()
+    p = panel()
+    u, ctx = cb_update(ADMIN, "copy:guard:BTCUSDT:short:sl_tighten:1")
+    run(p.on_callback(u, ctx))
+    cmd = shared.load_settings()["commands"][-1]
+    assert (cmd["name"], cmd["symbol"], cmd["side"], cmd["sl_tighten"]) == ("guard", "BTCUSDT", "short", True)
+    assert "no_add" not in cmd
+    u, ctx = cb_update(FATHER, "copy:guard:BTCUSDT:short:no_add:1")
+    run(p.on_callback(u, ctx))
+    assert len(shared.load_settings()["commands"]) == 1

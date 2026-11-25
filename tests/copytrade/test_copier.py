@@ -488,3 +488,78 @@ def test_hedged_rast_copies_are_not_treated_as_own():
     run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.2)), 0.2))
     msgs = run(c.on_event(Event("open", "BTCUSDT", None, LONG4), 0.15))
     assert "открыл LONG" in msgs[0].text and not msgs[0].text.startswith("⚠️")
+
+
+def adopted_long(sl=58500.0, size=0.0972):
+    """Случай 26.11: свой LONG 0.0972 взят в копию его 0.4, стопы Раста TP 66 666 / SL 58 500."""
+    ad, c = hedge(price=60170.0)
+    ad.hpos[(BTC, "long")] = size
+    his = P(side="long", size=0.4, avg=59045.6, margin=590.0, tp=66666.0, sl=sl, known=True)
+    run(c._adopt(("BTCUSDT", "long"), his))
+    return ad, c, his
+
+
+def test_no_add_skips_his_additions_but_follows_reductions_and_close():
+    ad, c, his = adopted_long()
+    (m,) = c.set_guard(("BTCUSDT", "long"), no_add=True)
+    assert "доливки Раста НЕ повторяю" in m.text
+    for auto in (True, False):                           # и в автомате, и с подтверждением — без кнопок, без ордеров
+        more = P(side="long", size=0.6, avg=59400.0, margin=890.0, tp=66666.0, sl=58500.0, known=True)
+        (m,) = run(c.on_event(Event("increase", "BTCUSDT", his, more), 0.14, auto=auto))
+        assert "не доливаю" in m.text and not m.buttons and ad.hpos[(BTC, "long")] == 0.0972
+        c.syms[("BTCUSDT", "long")].his_size = 0.4
+    c.syms[("BTCUSDT", "long")].his_size = 0.6
+    half = P(side="long", size=0.3, avg=59400.0, margin=445.0, tp=66666.0, sl=58500.0, known=True)
+    run(c.on_event(Event("decrease", "BTCUSDT", more, half), None, auto=True))      # сократил вдвое — и мы вдвое
+    assert ad.hpos[(BTC, "long")] == 0.0486
+    run(c.on_event(Event("close", "BTCUSDT", half, None), None, auto=True))
+    assert ad.hpos == {} and not c.syms
+
+
+def test_sl_only_tightens_for_long():
+    ad, c, his = adopted_long()
+    c.set_guard(("BTCUSDT", "long"), sl_tighten=True)
+    key = ("BTCUSDT", "long")
+
+    def moved(sl, tp=66666.0):
+        return P(side="long", size=0.4, avg=59045.6, margin=590.0, tp=tp, sl=sl, known=True)
+    (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", his, moved(57800.0)), 0.14, auto=True))   # отодвинул вниз
+    assert "отодвинул SL до 57 800" in m.text and "оставляю на 58 500" in m.text
+    assert ad.stops[BTC]["sl"] == 58500.0 and c.syms[key].sl == 58500.0
+    (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", his, moved(59300.0)), 0.14, auto=True))   # подтянул вверх
+    assert ad.stops[BTC]["sl"] == 59300.0 and "SL 59 300" in m.text
+    (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", his, moved(None, tp=70000.0)), 0.14, auto=True))  # убрал SL
+    assert ad.stops[BTC] == {"tp": 70000.0, "sl": 59300.0, "amount": 0.0972}             # TP — за ним, SL держу
+    assert "убрал SL" in m.text
+    half = P(side="long", size=0.2, avg=59045.6, margin=295.0, tp=70000.0, sl=None, known=True)
+    run(c.on_event(Event("decrease", "BTCUSDT", his, half), None, auto=True))          # перестановка после сокращения
+    assert ad.stops[BTC] == {"tp": 70000.0, "sl": 59300.0, "amount": 0.0486}
+
+
+def test_sl_only_tightens_for_short_and_guard_survives_restart():
+    ad, c = hedge(price=59000.0)
+    sh = P(side="short", size=0.4, avg=59345.0, margin=474.76, tp=55000.0, sl=60000.0, known=True)
+    run(c.on_event(Event("open", "BTCUSDT", None, sh), 0.2, auto=True))
+    c.set_guard(("BTCUSDT", "short"), sl_tighten=True, no_add=True)
+    looser = P(side="short", size=0.4, avg=59345.0, margin=474.76, tp=55000.0, sl=60500.0, known=True)
+    run(c.on_event(Event("tpsl", "BTCUSDT", sh, looser), 0.2, auto=True))
+    assert ad.stops[BTC]["sl"] == 60000.0                          # для шорта «дальше» — это выше
+    fresh = Copier(ad)
+    fresh.restore(c.dump())
+    st = fresh.syms[("BTCUSDT", "short")]
+    assert st.no_add and st.sl_tighten and st.sl == 60000.0
+
+
+def test_guard_needs_a_copy_and_readopt_cancels_old_stops():
+    ad, c = hedge()
+    assert "настраивать нечего" in c.set_guard(("BTCUSDT", "long"), no_add=True)[0].text
+    ad, c, his = adopted_long()
+    old_ids = list(c.syms[("BTCUSDT", "long")].stop_ids)
+    c.syms[("BTCUSDT", "long")].detached = True                  # долил руками → отцепилась
+    cancelled = []
+
+    async def cancel(sym, ids):
+        cancelled.extend(ids)
+    ad.cancel_stops = cancel
+    run(c._adopt(("BTCUSDT", "long"), his))
+    assert cancelled[:len(old_ids)] == old_ids and old_ids

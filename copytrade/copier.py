@@ -43,6 +43,8 @@ class SymState:
     his_size: float = 0.0          # его объём на момент последней синхронизации
     tp: Optional[float] = None     # выставленные у нас стопы
     sl: Optional[float] = None
+    no_add: bool = False           # доливки Раста по этой копии не повторяем (сокращения и закрытие — да)
+    sl_tighten: bool = False       # SL только подтягиваем к цене: отодвинул или убрал Раст — наш остаётся
 
 
 @dataclass
@@ -148,7 +150,8 @@ class Copier:
     def dump(self) -> dict:
         """Наши копии — для сохранения на диск: после перезапуска бот должен помнить, что открывал он."""
         return {key_str(k): {"side": st.side, "expected": st.expected, "detached": st.detached,
-                             "stop_ids": list(st.stop_ids), "his_size": st.his_size, "tp": st.tp, "sl": st.sl}
+                             "stop_ids": list(st.stop_ids), "his_size": st.his_size, "tp": st.tp, "sl": st.sl,
+                             "no_add": st.no_add, "sl_tighten": st.sl_tighten}
                 for k, st in self.syms.items()}
 
     def restore(self, data: dict) -> None:
@@ -158,7 +161,23 @@ class Copier:
             side = side or v.get("side")
             self.syms[(raw, side)] = SymState(side, float(v.get("expected", 0)), bool(v.get("detached")),
                                               list(v.get("stop_ids") or []), float(v.get("his_size") or 0),
-                                              v.get("tp"), v.get("sl"))
+                                              v.get("tp"), v.get("sl"), bool(v.get("no_add")),
+                                              bool(v.get("sl_tighten")))
+
+    def set_guard(self, key: tuple, no_add: Optional[bool] = None, sl_tighten: Optional[bool] = None) -> list:
+        """Защита конкретной копии: не доливать за Растом / SL только подтягивать."""
+        st = self.syms.get(key)
+        if not self.managed(key):
+            return [self._m(f"Копии {kname(key)} сейчас нет — настраивать нечего.")]
+        if no_add is not None:
+            st.no_add = bool(no_add)
+        if sl_tighten is not None:
+            st.sl_tighten = bool(sl_tighten)
+        adds = ("доливки Раста НЕ повторяю (сокращения и закрытие — повторяю)" if st.no_add
+                else "доливки Раста повторяю")
+        stop = (f"SL только подтягиваю: Раст подвинет ближе к цене — подвину, отодвинет или уберёт — "
+                f"мой остаётся на {fmt(st.sl)}" if st.sl_tighten else "SL — за Растом, куда бы он его ни ставил")
+        return [self._m(f"🛡 {kname(key)} {fmt(st.expected)}: {adds}; {stop}.")]
 
     # ---------- предложения ----------
     def _offer(self, kind: str, key: tuple, text: str, yes="Делаем", no="Не делаем", keep: Optional[str] = None,
@@ -308,6 +327,12 @@ class Copier:
             return [self._m(f"ОШИБКА: не получил твою позицию {kname(key)}: {e}")]
         if s_ != side or amt <= 0:
             return [self._m(f"Твоего {kname(key)} уже нет — брать нечего.")]
+        old = self.syms.get(key)
+        if old is not None and old.stop_ids:          # стопы прежней (отцепленной) копии больше не нужны
+            try:
+                await self.ex.cancel_stops(info.symbol, old.stop_ids)
+            except Exception as e:
+                log.warning("cancel old stops %s: %r", key, e)
         self.syms[key] = SymState(side, amt, his_size=his.size)
         msgs = [self._m(f"веду твой {kname(key)} {qty(raw, amt, px)} как копию его {fmt(his.size)}: "
                         f"сократит — сокращу в той же доле, закроет — закрою, доливки и TP/SL — за ним.")]
@@ -369,6 +394,9 @@ class Copier:
             if own:
                 px = await self._live_px(b)
                 return [self._conflict(key, b, k, f"Раст открыл {desc(b)}.", own, px, auto)]
+        if ev.kind == "increase" and self.managed(key) and st.no_add:     # доливки выключены — просто сообщаю
+            self._drop_offers(key)
+            return await self._sync(key, b, k)
         if auto and (s in self.auto_symbols or self.managed(key)):
             self._drop_offers(key)
             if ev.kind == "tpsl":
@@ -454,7 +482,12 @@ class Copier:
         if drift:
             return [] if drift == "detached" else [self._m(drift)]
         msgs = []
-        if his.size > st.his_size * 1.0001:
+        if his.size > st.his_size * 1.0001 and st.no_add:
+            msgs.append(self._m(f"Раст добавил {kname(key)}: {fmt(st.his_size)} → {fmt(his.size)}\n"
+                                f"→ не доливаю (для этой позиции доливки выключены), у тебя остаётся "
+                                f"{qty(key[0], st.expected, his.mark or his.avg)}"))
+            st.his_size = his.size     # дальше сокращения — в той же доле, что у него
+        elif his.size > st.his_size * 1.0001:
             msgs += await self._add(key, his, k)
         elif his.size < st.his_size * 0.9999:
             msgs += await self._reduce(key, his)
@@ -593,8 +626,13 @@ class Copier:
         if info is None or st is None or st.detached or st.expected <= 0:
             return []
         tp, sl = (p.tp, p.sl) if p.tpsl_known else (st.tp, st.sl)
+        note = ""
+        if st.sl_tighten and st.sl and (sl is None or (sl < st.sl if st.side == "long" else sl > st.sl)):
+            note = (f"Раст {'убрал SL' if sl is None else f'отодвинул SL до {fmt(sl)}'} — твой SL оставляю "
+                    f"на {fmt(st.sl)} (стоп только подтягиваю).")
+            sl = st.sl
         if not force and (tp, sl) == (st.tp, st.sl) and st.stop_ids:
-            return []
+            return [self._m(note)] if note and not quiet else []
         try:
             drift = await self._check_drift(key, info)
             if drift:
@@ -609,4 +647,5 @@ class Copier:
             return [self._m(f"ОШИБКА при выставлении TP/SL {kname(key)}: {e}")]
         if quiet:
             return []
-        return [self._m(f"TP/SL {kname(key)} → TP {fmt(tp)} / SL {fmt(sl)} на весь объём {fmt(st.expected)}")]
+        return [self._m(f"TP/SL {kname(key)} → TP {fmt(tp)} / SL {fmt(sl)} на весь объём {fmt(st.expected)}"
+                        + (f"\n{note}" if note else ""))]

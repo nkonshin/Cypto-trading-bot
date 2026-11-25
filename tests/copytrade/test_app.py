@@ -242,3 +242,21 @@ def test_pause_message_in_perm_time(app):
     shared.save_settings(paused_until=until)
     asyncio.run(app.apply_settings())
     assert any(f"Пауза до {shared.perm_time(until)}" in t for t in app.tg.texts())
+
+
+def test_guard_command_sets_flags_and_status_shows_them(app):
+    from types import SimpleNamespace
+    app.source = SimpleNamespace(online=True)
+    shared.save_settings(auto=True)
+    asyncio.run(app.apply_settings())
+    asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))
+    shared.add_command("guard", symbol="BTCUSDT", side="short", no_add=True)
+    asyncio.run(app.apply_settings())
+    assert "доливки Раста НЕ повторяю" in app.tg.texts()[-1]
+    shared.add_command("guard", symbol="BTCUSDT", side="short", sl_tighten=True)
+    asyncio.run(app.apply_settings())
+    st = app.copier.syms[("BTCUSDT", "short")]
+    assert st.no_add and st.sl_tighten                       # вторая команда не сбросила первую
+    app.write_status()
+    (o,) = shared.read_status()["our_positions"]
+    assert o["no_add"] and o["sl_tighten"]
