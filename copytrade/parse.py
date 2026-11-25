@@ -17,7 +17,8 @@ _TAB = re.compile(r"(?i)p\w{4,9}\s*\(\s*(\d{1,2})\s*\)")
 _SYMBOL = re.compile(r"^[A-Z0-9]{2,15}USDT$")
 _UNIT = re.compile(r"(?i)ion\w*\s*\(\s*([A-Za-z0-9]{2,10})\s*\)")
 # цена TP/SL — число прямо перед своей суммой «($…)», либо «--», если не задано
-_TPSL_TOKEN = re.compile(r"(\d[\d.,]*)(?=\(\$)|(?<![\d.,$])--(?![\d])")
+# OCR иногда читает «$» как «5»/«S»: «(583.86)» вместо «($83.66)»
+_TPSL_TOKEN = re.compile(r"(\d[\d.,]*)(?=\([$S5s])|(?<![\d.,$])--(?![\d])")
 
 
 def norm(text: str) -> str:

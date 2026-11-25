@@ -63,8 +63,14 @@ class Reading:
 
 @dataclass(frozen=True)
 class Event:
-    kind: str                    # baseline | open | close | increase | decrease | flip | tpsl
+    kind: str                    # baseline | open | close | increase | decrease | tpsl
     symbol: str = ""
     before: Optional[Pos] = None
     after: Optional[Pos] = None
     positions: tuple = field(default=())   # для baseline
+    side: str = ""               # позиция = (монета, сторона): в hedge-режиме LONG и SHORT независимы
+
+    @property
+    def key(self) -> tuple:
+        side = self.side or (self.after or self.before).side
+        return (self.symbol, side)

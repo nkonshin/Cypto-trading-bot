@@ -126,7 +126,7 @@ class App:
             shared.save_settings(mode="notify")
         try:
             if mode == "notify":
-                self.adapter = PaperAdapter(equity=float(self.settings.get("paper_equity", 200)))
+                self.adapter = PaperAdapter(equity=float(self.settings.get("paper_equity", 200)), hedged=True)
             elif mode in ("demo", "live"):
                 self.adapter = CcxtAdapter(os.environ["BINGX_API_KEY"], os.environ["BINGX_API_SECRET"], mode == "demo")
             if self.adapter is not None:
@@ -257,14 +257,14 @@ class App:
         if self.copier is None or is_paused(self.settings):
             a, b = ev.before, ev.after
             why = "пауза — не трогаю" if self.copier else "копирование выключено"
-            what = {"open": f"открыл {desc(b) if b else ''}", "close": f"закрыл {desc(a) if a else ev.symbol}",
-                    "flip": f"перевернул {ev.symbol} в {desc(b) if b else ''}",
-                    "increase": f"добавил {ev.symbol} {fmt(a.size)} → {fmt(b.size)}" if a and b else "",
-                    "decrease": f"сократил {ev.symbol} {fmt(a.size)} → {fmt(b.size)}" if a and b else "",
-                    "tpsl": f"TP/SL {ev.symbol} → TP {fmt(b.tp)} / SL {fmt(b.sl)}" if b else ""}.get(ev.kind, ev.kind)
+            name = f"{ev.key[1].upper()} {ev.symbol}"
+            what = {"open": f"открыл {desc(b) if b else ''}", "close": f"закрыл {desc(a) if a else name}",
+                    "increase": f"добавил {name} {fmt(a.size)} → {fmt(b.size)}" if a and b else "",
+                    "decrease": f"сократил {name} {fmt(a.size)} → {fmt(b.size)}" if a and b else "",
+                    "tpsl": f"TP/SL {name} → TP {fmt(b.tp)} / SL {fmt(b.sl)}" if b else ""}.get(ev.kind, ev.kind)
             await self._send([f"{'⏸ ' if self.copier else ''}Раст {what} ({why})"])
             return
-        k = await self.k_now() if ev.kind in ("open", "flip", "increase") else None
+        k = await self.k_now() if ev.kind in ("open", "increase") else None
         await self._send(await self.copier.on_event(ev, k, auto=bool(self.settings.get("auto"))))
 
     async def apply_settings(self) -> None:
@@ -360,8 +360,8 @@ class App:
                 "tp": p.tp, "sl": p.sl} for p in (t.confirmed or {}).values()]
         ours = []
         if self.copier:
-            for raw, st in self.copier.syms.items():
-                ours.append({"symbol": raw, "side": st.side, "amount": st.expected, "detached": st.detached})
+            for key, st in self.copier.syms.items():
+                ours.append({"symbol": key[0], "side": st.side, "amount": st.expected, "detached": st.detached})
         k = None
         if self.our_equity and self.his_balance:
             k = self.our_equity / self.his_balance * float(self.settings["mult"])

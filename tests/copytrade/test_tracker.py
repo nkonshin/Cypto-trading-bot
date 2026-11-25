@@ -45,17 +45,17 @@ def test_open_increase_decrease_flip_close():
     t = Tracker()
     t.update(R()); t.update(R())
     seq = [
-        (P(size=0.2), "open"),
-        (P(size=0.3), "increase"),
-        (P(size=0.1), "decrease"),
-        (P(side="long", size=0.1), "flip"),
-        (None, "close"),
+        (P(size=0.2), ["open"]),
+        (P(size=0.3), ["increase"]),
+        (P(size=0.1), ["decrease"]),
+        (P(side="long", size=0.1), ["close", "open"]),       # переворот = закрыть шорт, открыть лонг
+        (None, ["close"]),
     ]
     for pos, kind in seq:
         r = R(pos) if pos else R()
         assert t.update(r) == []
         ev = t.update(r)
-        assert kinds(ev) == [kind], kind
+        assert kinds(ev) == kind, kind
 
 
 def test_tpsl_confirmed_separately_and_unknown_skipped():
@@ -76,9 +76,9 @@ def test_tpsl_survives_resize_but_not_flip():
     t.update(R(P())); t.update(R(P()))
     t.update(R(P(tp=54321.0, sl=59750.0, known=True))); t.update(R(P(tp=54321.0, sl=59750.0, known=True)))
     t.update(R(P(size=0.3))); t.update(R(P(size=0.3)))
-    assert t.confirmed["BTCUSDT"].sl == 59750.0
+    assert t.confirmed[("BTCUSDT", "short")].sl == 59750.0
     t.update(R(P(side="long", size=0.3))); t.update(R(P(side="long", size=0.3)))
-    assert not t.confirmed["BTCUSDT"].tpsl_known
+    assert not t.confirmed[("BTCUSDT", "long")].tpsl_known
 
 
 def test_blind_for():
@@ -99,4 +99,16 @@ def test_size_change_without_margin_change_is_ocr_error():
     bad = Pos("BTCUSDT", "short", 0.6, 58967.2, 486.1696, 58600.0)
     assert t.update(R(bad)) == [] and t.update(R(bad)) == []
     assert "без изменения маржи" in t.last_reading.reason
-    assert t.confirmed["BTCUSDT"].size == 0.4
+    assert t.confirmed[("BTCUSDT", "short")].size == 0.4
+
+
+
+def test_hedge_long_and_short_on_same_coin_are_independent():
+    """Реальный случай 25.11: у Раста одновременно LONG 0.2 и SHORT 0.2 по BTC."""
+    t = Tracker()
+    t.update(R(P(size=0.4))); t.update(R(P(size=0.4)))
+    both = (P(size=0.2), P(side="long", size=0.2))
+    assert t.update(R(*both)) == []
+    ev = t.update(R(*both))
+    assert [(e.kind, e.key) for e in ev] == [("decrease", ("BTCUSDT", "short")), ("open", ("BTCUSDT", "long"))]
+    assert set(t.confirmed) == {("BTCUSDT", "short"), ("BTCUSDT", "long")}

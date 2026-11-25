@@ -27,7 +27,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(shared, "DATA_DIR", str(tmp_path))
     from copytrade import main as m
 
-    def fake_paper(equity=200.0):
+    def fake_paper(equity=200.0, hedged=False):
         return PaperAdapter(markets={BTC: MarketInfo(BTC, 0.0001, 0.0001)}, price_fn=lambda s: 59000.0, equity=equity)
 
     monkeypatch.setattr(m, "PaperAdapter", fake_paper)
@@ -42,7 +42,7 @@ def P(size=0.4, side="short"):
 
 
 def confirm(app, *positions):
-    app.tracker.confirmed = {p.symbol: p for p in positions}
+    app.tracker.confirmed = {(p.symbol, p.side): p for p in positions}
 
 
 def test_k_from_current_balances_and_multiplier(app):
@@ -110,10 +110,10 @@ def test_copies_survive_restart_in_live_modes(app, tmp_path):
     asyncio.run(fresh.set_mode("notify"))
     fresh.mode = "demo"
     fresh.load_copies()
-    assert fresh.copier.syms["BTCUSDT"].expected == 0.0888
+    assert fresh.copier.syms[("BTCUSDT", "short")].expected == 0.0888
     # после перезапуска сверка не предлагает «Открыть» поверх уже открытой копии
     fresh.adapter.positions["BTC/USDT:USDT"] = ("short", 0.0888)
-    msgs = asyncio.run(fresh.copier.resync({"BTCUSDT": P()}, 0.2, "Сверка:"))
+    msgs = asyncio.run(fresh.copier.resync({("BTCUSDT", "short"): P()}, 0.2, "Сверка:"))
     assert len(msgs) == 1 and "копия на месте" in msgs[0].text
 
 

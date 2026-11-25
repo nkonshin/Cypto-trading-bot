@@ -34,11 +34,14 @@ class PaperAdapter:
 
     name = "paper"
 
-    def __init__(self, markets: Optional[dict] = None, price_fn: Optional[Callable] = None, equity: float = 200.0):
+    def __init__(self, markets: Optional[dict] = None, price_fn: Optional[Callable] = None, equity: float = 200.0,
+                 hedged: bool = False):
         self.markets = markets or {}
         self._price_fn = price_fn
         self.equity = equity
-        self.positions: dict = {}      # ccxt symbol -> (side, amount)
+        self.hedged = hedged
+        self.positions: dict = {}      # one-way: ccxt symbol -> (side, amount)
+        self.hpos: dict = {}           # hedge: (ccxt symbol, side) -> amount
         self.stops: dict = {}          # ccxt symbol -> {"tp":..,"sl":..,"amount":..}
         self.orders: list = []
         self._public = None
@@ -65,6 +68,13 @@ class PaperAdapter:
         return float(t["last"])
 
     async def position(self, sym: str, side: Optional[str] = None):
+        if self.hedged:
+            sides = [side] if side else ["long", "short"]
+            for s in sides:
+                amt = self.hpos.get((sym, s), 0.0)
+                if amt > 1e-12:
+                    return s, amt
+            return None, 0.0
         return self.positions.get(sym, (None, 0.0))
 
     async def balance(self):
@@ -77,6 +87,19 @@ class PaperAdapter:
     async def market_order(self, sym: str, side: str, amount: float, reduce_only: bool,
                            pos_side: Optional[str] = None) -> float:
         px = await self.price(sym)
+        if self.hedged:
+            ps = pos_side or ("long" if side == "buy" else "short")
+            if reduce_only:
+                ps = pos_side or ("short" if side == "buy" else "long")
+                left = round(self.hpos.get((sym, ps), 0.0) - amount, 10)
+                if left > 1e-12:
+                    self.hpos[(sym, ps)] = left
+                else:
+                    self.hpos.pop((sym, ps), None)
+            else:
+                self.hpos[(sym, ps)] = round(self.hpos.get((sym, ps), 0.0) + amount, 10)
+            self.orders.append(("market", sym, side, amount, reduce_only))
+            return px
         cur_side, cur = self.positions.get(sym, (None, 0.0))
         pos_side = "long" if side == "buy" else "short"
         if reduce_only:

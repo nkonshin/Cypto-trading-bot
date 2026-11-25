@@ -94,3 +94,16 @@ def test_change_detector_ignores_pnl_and_mark():
     for y, x in ((457, 300), (457, 330), (457, 352), (484, 318), (484, 340), (530, 400)):
         n[y, x] = 255 - n[y, x]
     assert not d.changed(n)
+
+
+
+def test_real_hedge_frame_two_cards(reader):
+    """25.11: Раст захеджировался — LONG 0.2 и SHORT 0.2 по BTC; форма короче, панель выше на 152 px."""
+    r = reader.read(cv2.imread(os.path.join(FX, "hedge_long02_short02.jpg")), with_balance=True)
+    assert r.ok, r.reason
+    assert r.n_tab == 2 and r.balance == 925.8127
+    pos = {p.side: p for p in r.positions}
+    assert (pos["long"].size, pos["long"].avg, pos["long"].leverage) == (0.2, 58669.3, 50)
+    assert (pos["short"].size, pos["short"].avg, pos["short"].leverage) == (0.2, 58967.2, 50)
+    assert (pos["short"].tp, pos["short"].sl) == (54321.0, 59300.0)
+    assert (pos["long"].tp, pos["long"].sl) == (None, 58250.0)

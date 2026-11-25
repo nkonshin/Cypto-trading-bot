@@ -16,7 +16,10 @@ REF_W, REF_H = 1720, 720
 # Координаты в эталонной раскладке (кадр short_btc_a). Панель «плавает» по вертикали, когда Раст меняет
 # форму ордера (лимитный ордер добавляет строки), поэтому всё отсчитывается от якоря — надписи вкладок.
 ANCHOR_AT = (395, 431)                       # где якорь стоит в эталоне
-ANCHOR_SEARCH = (250, 340, 410, 260)         # где его искать
+ANCHOR_SEARCH = (250, 60, 410, 600)          # где его искать: вся левая колонка (форма бывает разной высоты)
+CARD_PITCH = 149                             # шаг карточек позиций по вертикали
+CARD_CHUNK_H = 90                            # вырезка следующей карточки: строка монеты … ряд средней цены
+PANEL_BOTTOM = 625                           # ниже — «Assets Value», карточки туда не помещаются
 ANCHOR_MIN_SCORE = 0.8
 PANEL = (275, 428, 350, 140)      # вкладки + первая карточка до ряда средней цены (эталон)
 TPSL_DX, TPSL_DY, TPSL_W, TPSL_H = 165, 84, 185, 18   # строка TP/SL от левого края панели / от строки монеты
@@ -97,6 +100,33 @@ class PanelReader:
                            (max(xs) - min(xs)) / scale, (max(ys) - min(ys)) / scale, text, float(conf)))
         return out
 
+    def _read_card(self, frame, cx, cy, boxes, sym_box, symbol):
+        """Одна карточка позиции; (cx, cy) — левый верхний угол вырезки, в которой лежат boxes."""
+        rect = (cx + SIZE_DX, cy + sym_box.y + SIZE_DY, SIZE_W, SIZE_H)
+        votes = []
+        for sc in (3, 4, 5):            # объём ещё трижды; вместе с панелью — голосование (нужно ≥2 совпадения)
+            sb = self.ocr_boxes(frame, rect, sc)
+            votes.append(next((parse_number(b.text) for b in sb if b.conf >= 0.85 and parse_number(b.text)), None))
+        self.last_votes = votes
+        form_sym, form_lev = self.form(frame)
+        pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
+        if pos is None and "плечом" in why:            # вдруг он поменял плечо — перечитать форму сразу
+            form_sym, form_lev = self.form(frame, force=True)
+            pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
+        if pos is None:
+            return None, why
+        side = side_by_color(frame, int(cx + sym_box.x - 2), int(cy + sym_box.y + 11))
+        if side is None:
+            return None, "сторона не определена"
+        tp = sl = None
+        known = False
+        tb = self.ocr_boxes(frame, (cx + TPSL_DX, cy + sym_box.y + TPSL_DY, TPSL_W, TPSL_H), TPSL_SCALE)
+        parsed = parse_tpsl(" ".join(b.text for b in sorted(tb, key=lambda b: b.x)), pos.mark)
+        if parsed and all(b.conf >= 0.75 for b in tb) and valid_tpsl(side, pos.mark, *parsed):
+            tp, sl = parsed
+            known = True
+        return Pos(pos.symbol, side, pos.size, pos.avg, pos.margin, pos.mark, tp, sl, known, pos.lev), ""
+
     def read(self, frame: np.ndarray, with_balance: bool = False) -> Reading:
         now = time.time()
         frame = to_ref(frame)
@@ -117,37 +147,28 @@ class PanelReader:
             if cards:
                 return Reading(False, (), n, balance, "вкладка 0, но карточка видна", now)
             return Reading(True, (), 0, balance, "", now)
-        if n > 1:
-            return Reading(False, (), n, balance, f"у него {n} позиций, вижу только первую", now)
         if len(cards) != 1:
             return Reading(False, (), n, balance, "карточка позиции не найдена", now)
         sym_box, symbol = cards[0]
-        # объём ещё трижды — отдельной вырезкой ×3/×4/×5; вместе с панелью это голосование (нужно ≥2 совпадения)
-        rect = (px0 + SIZE_DX, py0 + sym_box.y + SIZE_DY, SIZE_W, SIZE_H)
-        votes = []
-        for sc in (3, 4, 5):
-            sb = self.ocr_boxes(frame, rect, sc)
-            votes.append(next((parse_number(b.text) for b in sb if b.conf >= 0.85 and parse_number(b.text)), None))
-        self.last_votes = votes
-        form_sym, form_lev = self.form(frame)
-        pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
-        if pos is None and "плечом" in why:            # вдруг он поменял плечо — перечитать форму сразу
-            form_sym, form_lev = self.form(frame, force=True)
-            pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
+        pos, why = self._read_card(frame, px0, py0, boxes, sym_box, symbol)
         if pos is None:
             return Reading(False, (), n, balance, why, now)
-        side = side_by_color(frame, int(px0 + sym_box.x - 2), int(py0 + sym_box.y + 11))
-        if side is None:
-            return Reading(False, (), n, balance, "сторона не определена", now)
-        tp = sl = None
-        known = False
-        tb = self.ocr_boxes(frame, (px0 + TPSL_DX, py0 + sym_box.y + TPSL_DY, TPSL_W, TPSL_H), TPSL_SCALE)
-        parsed = parse_tpsl(" ".join(b.text for b in sorted(tb, key=lambda b: b.x)), pos.mark)
-        if parsed and all(b.conf >= 0.8 for b in tb) and valid_tpsl(side, pos.mark, *parsed):
-            tp, sl = parsed
-            known = True
-        pos = Pos(pos.symbol, side, pos.size, pos.avg, pos.margin, pos.mark, tp, sl, known, pos.lev)
-        return Reading(True, (pos,), n, balance, "", now)
+        positions = [pos]
+        for i in range(1, n):
+            top = int(py0 + sym_box.y + i * CARD_PITCH - 8)
+            if top + CARD_CHUNK_H > PANEL_BOTTOM:
+                return Reading(False, (), n, balance, f"у него {n} позиций, на экране видно только {i}", now)
+            cb = self.ocr_boxes(frame, (px0, top, PANEL[2], CARD_CHUNK_H), PANEL_SCALE)
+            cs = find_cards(cb)
+            if len(cs) != 1:
+                return Reading(False, (), n, balance, f"карточка позиции №{i + 1} не найдена", now)
+            p, why = self._read_card(frame, px0, top, cb, cs[0][0], cs[0][1])
+            if p is None:
+                return Reading(False, (), n, balance, f"позиция №{i + 1}: {why}", now)
+            positions.append(p)
+        if len({(p.symbol, p.side) for p in positions}) != len(positions):
+            return Reading(False, (), n, balance, "две карточки с одной и той же позицией", now)
+        return Reading(True, tuple(positions), n, balance, "", now)
 
 
 class ChangeDetector:
@@ -160,16 +181,23 @@ class ChangeDetector:
         self.min_pixels = min_pixels
         self.ref = None
 
+    SIG_H = 360          # вкладки + до трёх карточек
+
     @staticmethod
     def _sig(frame: np.ndarray) -> np.ndarray:
         frame = to_ref(frame)
         dx, dy = locate(frame) or (0, 0)
-        x, y, cw, ch = PANEL[0] + dx, max(0, PANEL[1] + dy), PANEL[2], 190
-        g = cv2.cvtColor(frame[y:y + ch, x:x + cw], cv2.COLOR_BGR2GRAY)
-        g = cv2.resize(g, (cw, ch)).astype(np.int16)
-        g[45:80, 240:] = 0     # PnL
-        g[75:140, 110:] = 0    # маржа/ratio/mark/liq
-        g[136:155, 260:] = 0   # суммы в скобках у TP/SL
+        x, y, cw = PANEL[0] + dx, max(0, PANEL[1] + dy), PANEL[2]
+        h = ChangeDetector.SIG_H
+        g = np.zeros((h, cw), np.int16)
+        bottom = min(y + h, PANEL_BOTTOM)                 # ниже — баланс и PnL дня, они меняются постоянно
+        if bottom > y:
+            g[:bottom - y] = cv2.cvtColor(frame[y:bottom, x:x + cw], cv2.COLOR_BGR2GRAY).astype(np.int16)
+        for i in range(3):                                # динамичные поля каждой карточки
+            o = i * CARD_PITCH
+            g[max(0, 45 + o):max(0, 80 + o), 240:] = 0     # PnL
+            g[max(0, 75 + o):max(0, 140 + o), 110:] = 0    # маржа/ratio/mark/liq
+            g[max(0, 136 + o):max(0, 155 + o), 260:] = 0   # суммы в скобках у TP/SL
         return g
 
     def changed(self, frame: np.ndarray) -> bool:
