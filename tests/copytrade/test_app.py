@@ -137,3 +137,30 @@ def test_default_is_confirm_each_action(app):
     asyncio.run(app.apply_settings())
     assert app.adapter.positions[BTC] == ("short", 0.0888)
     assert app.tg.sent[-1].text.startswith("[тест] ✅ Готово")
+
+
+
+def test_enter_command_from_menu_sends_entry_offer(app):
+    confirm(app, P())
+    shared.add_command("enter", symbol="BTCUSDT", side="short")
+    asyncio.run(app.apply_settings())
+    last = app.tg.sent[-1]
+    assert [b[0] for b in last.buttons] == ["✅ Войти", "✖️ Не входить"] and "PnL Раста" in last.text
+    assert BTC not in app.adapter.positions
+
+
+def test_status_has_his_pnl_at_live_price(app):
+    from types import SimpleNamespace
+    app.source = SimpleNamespace(online=True)
+    confirm(app, P())                                  # SHORT 0.4 по 59 345, маржа 474.76; цена 59 000
+    asyncio.run(app.refresh_prices())
+    app.write_status()
+    (p,) = shared.read_status()["his_positions"]
+    assert p["price"] == 59000.0 and round(p["pnl"], 2) == 138.0 and round(p["pnl_pct"], 1) == 29.1
+
+
+def test_update_on_declined_position_comes_with_estimate(app):
+    confirm(app, P(size=0.2))
+    asyncio.run(app.on_event(Event("decrease", "BTCUSDT", P(), P(size=0.2))))
+    last = app.tg.sent[-1]
+    assert last.buttons and "у тебя будет SHORT" in last.text      # k посчитан и для сокращения

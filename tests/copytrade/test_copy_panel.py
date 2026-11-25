@@ -116,6 +116,7 @@ def test_status_text_renders_live_status():
     t = status_text()
     assert "Раст: SHORT BTCUSDT 0.4 BTC (~$23 738) по 59 345 (50x) · TP 54 321 / SL 59 600" in t
     assert "Баланс: его 815.65 · твой 200 USDT · k сейчас 0.245" in t
+    assert "PnL" not in t                                          # цены ещё нет — без PnL
     shared.save_settings(paused_until=-1)
     assert "на паузе без срока" in status_text()
 
@@ -130,3 +131,44 @@ def test_auto_toggle():
     u, ctx = cb_update(FATHER, "copy:auto")
     run(p.on_callback(u, ctx))
     assert shared.load_settings()["auto"] is True
+
+
+
+def his_status(ours=()):
+    shared.write_status({"mode": "notify", "online": True, "seen_ok": True, "reason": "",
+                         "his_positions": [{"symbol": "BTCUSDT", "side": "short", "size": 0.4, "avg": 59345.0,
+                                            "leverage": 50, "tp": None, "sl": None, "price": 59000.0,
+                                            "pnl": 138.0, "pnl_pct": 29.07},
+                                           {"symbol": "BTCUSDT", "side": "long", "size": 0.2, "avg": 58669.3,
+                                            "leverage": 50, "tp": None, "sl": None, "price": 59000.0,
+                                            "pnl": 66.14, "pnl_pct": 28.2}],
+                         "his_balance": 900.0, "our_positions": list(ours), "our_equity": 200.0, "k": 0.22,
+                         "events": []})
+
+
+def test_status_shows_his_pnl():
+    from telegram_ui.copy_panel import status_text
+    his_status()
+    t = status_text()
+    assert "SHORT BTCUSDT 0.4 BTC (~$23 738) по 59 345 (50x) · PnL +$138 (+29.1%)" in t
+
+
+def test_enter_buttons_for_uncopied_positions():
+    from telegram_ui.copy_panel import keyboard
+    his_status(ours=[{"symbol": "BTCUSDT", "side": "short", "amount": 0.08, "detached": False}])
+    btns = [b for row in keyboard().inline_keyboard for b in row if b.callback_data.startswith("copy:enter:")]
+    assert [(b.text, b.callback_data) for b in btns] == [("➕ Войти LONG BTCUSDT", "copy:enter:BTCUSDT:long")]
+    shared.save_settings(mode="off")                                # без копировщика входить некуда
+    assert not [b for row in keyboard().inline_keyboard for b in row if b.callback_data.startswith("copy:enter:")]
+
+
+def test_enter_button_becomes_command():
+    p = panel()
+    his_status()
+    u, ctx = cb_update(ADMIN, "copy:enter:BTCUSDT:long")
+    run(p.on_callback(u, ctx))
+    cmd = shared.load_settings()["commands"][-1]
+    assert (cmd["name"], cmd["symbol"], cmd["side"]) == ("enter", "BTCUSDT", "long")
+    u, ctx = cb_update(FATHER, "copy:enter:BTCUSDT:short")
+    run(p.on_callback(u, ctx))
+    assert len(shared.load_settings()["commands"]) == 1

@@ -15,7 +15,7 @@ from typing import Optional
 import aiohttp
 
 from copytrade import shared
-from copytrade.copier import Copier, desc, fmt
+from copytrade.copier import Copier, desc, fmt, his_pnl
 from copytrade.exchange import CcxtAdapter, PaperAdapter
 from copytrade.model import Msg
 from copytrade.tracker import Tracker, _key
@@ -82,6 +82,7 @@ class App:
         self.last_balance = 0.0
         self.his_balance = None
         self.our_equity = None
+        self.prices: dict = {}             # монета -> цена BingX (для PnL Раста в /copy)
         self.blind_alerted = False
         self.offline_alerted = False
         # команды, лежавшие до запуска, не выполняем повторно (например «закрыть копии» перед рестартом)
@@ -266,7 +267,8 @@ class App:
                     "tpsl": f"TP/SL {name} → TP {fmt(b.tp)} / SL {fmt(b.sl)}" if b else ""}.get(ev.kind, ev.kind)
             await self._send([f"{'⏸ ' if self.copier else ''}Раст {what} ({why})"])
             return
-        k = await self.k_now() if ev.kind in ("open", "increase") else None
+        # k нужен и для сокращения/стопов: по позиции без копии такие события приходят с кнопкой «Войти»
+        k = await self.k_now() if ev.kind != "close" else None
         await self._send(await self.copier.on_event(ev, k, auto=bool(self.settings.get("auto"))))
 
     async def apply_settings(self) -> None:
@@ -309,6 +311,9 @@ class App:
                 continue                                         # старые команды после перезапуска не выполняем
             if cmd.get("name") == "close_all" and self.copier:
                 await self._send(await self.copier.close_all() or ["Закрывать нечего: копий нет."])
+            elif cmd.get("name") == "enter" and self.copier:
+                key = (cmd.get("symbol"), cmd.get("side"))
+                await self._send(await self.copier.offer_entry(key, self.rast_now().get(key), await self.k_now()))
             elif cmd.get("name") == "offer" and self.copier:
                 await self._send(await self.copier.answer_offer(cmd["offer"], bool(cmd.get("yes")),
                                                                 self.rast_now(), await self.k_now()))
@@ -344,6 +349,18 @@ class App:
                 await self.tg.send(f"Стрим недоступен ({self.source.last_error}). Ничего не делаю.")
             await asyncio.sleep(10)
 
+    async def refresh_prices(self) -> None:
+        if self.adapter is None:
+            return
+        for raw in {p.symbol for p in (self.tracker.confirmed or {}).values()}:
+            info = self.adapter.market(raw)
+            if info is None:
+                continue
+            try:
+                self.prices[raw] = float(await self.adapter.price(info.symbol))
+            except Exception as e:
+                log.warning("price %s: %r", raw, e)
+
     async def status_loop(self) -> None:
         while True:
             try:
@@ -351,6 +368,7 @@ class App:
                     self.our_equity = (await self.adapter.balance())[0]
             except Exception as e:
                 log.warning("balance: %r", e)
+            await self.refresh_prices()
             for _ in range(20):
                 self.write_status()
                 await asyncio.sleep(3)
@@ -358,8 +376,13 @@ class App:
     def write_status(self) -> None:
         t = self.tracker
         lr = t.last_reading
-        his = [{"symbol": p.symbol, "side": p.side, "size": p.size, "avg": p.avg, "leverage": p.leverage,
-                "tp": p.tp, "sl": p.sl} for p in (t.confirmed or {}).values()]
+        his = []
+        for p in (t.confirmed or {}).values():
+            px = self.prices.get(p.symbol)
+            r = his_pnl(p, px)
+            his.append({"symbol": p.symbol, "side": p.side, "size": p.size, "avg": p.avg, "leverage": p.leverage,
+                        "tp": p.tp, "sl": p.sl, "price": px, "pnl": r[0] if r else None,
+                        "pnl_pct": r[1] if r else None})
         ours = []
         if self.copier:
             for key, st in self.copier.syms.items():

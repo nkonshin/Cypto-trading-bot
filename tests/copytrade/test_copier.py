@@ -131,12 +131,14 @@ def test_inconsistent_margin_means_default_leverage():
     assert ("prepare", BTC, 10) in ad.orders
 
 
-def test_uncopied_positions_only_reported():
-    ad, c = make()
-    msgs = run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.3)), 0.2))
-    assert "не копирую" in msgs[0].text and BTC not in ad.positions
-    msgs = run(c.on_event(Event("close", "BTCUSDT", P(size=0.3), None), 0.2))
-    assert "не копировали" in msgs[0].text
+def test_uncopied_position_update_offers_entry_and_close_reports_his_result():
+    ad, c = make()                                    # цена на бирже 59 000, у него вход 59 571.7
+    msgs = run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.3, margin=368.37)), 0.2))
+    (m,) = msgs
+    assert BTC not in ad.positions and [b[0] for b in m.buttons] == ["✅ Войти", "✖️ Не входить"]
+    assert "PnL Раста сейчас: +$172 (+46.6%) при цене 59 000" in m.text
+    msgs = run(c.on_event(Event("close", "BTCUSDT", P(size=0.3, margin=368.37), None), 0.2))
+    assert "не копировали" in msgs[0].text and "+$172" in msgs[0].text and not msgs[0].buttons
 
 
 def test_manual_positions_on_other_coins_are_never_touched():
@@ -178,6 +180,7 @@ def test_resync_offers_open_and_close():
     # у Раста есть, у нас нет → предложение открыть
     msgs = run(c.resync(rk(P(size=0.4)), 0.2, "Сверка:"))
     assert len(msgs) == 2 and "Открыть по рынку" in msgs[1].text and msgs[1].buttons
+    assert "PnL Раста сейчас: +$" in msgs[1].text
     # у нас копия, Раст закрыл во время паузы → предложение закрыть / оставить себе
     run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
     msgs = run(c.resync({}, 0.2, "Сверка:"))
@@ -301,3 +304,57 @@ def test_hedge_long_and_short_copies_are_independent():
     c2 = Copier(ad)
     c2.restore(c.dump())
     assert set(c2.syms) == {("BTCUSDT", "short")}
+
+
+
+# ---------- повторное предложение войти и PnL Раста ----------
+
+def test_declined_position_is_reoffered_on_every_update():
+    ad, c = make()
+    (m,) = run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2, auto=False))
+    out = run(c.answer_offer(offer_id(m, False), False, rk(P()), 0.2))          # «Не делаем»
+    assert "снова предложу войти" in out[0].text
+    p3 = P(size=0.3, margin=368.37)
+    p3s = P(size=0.3, margin=368.37, tp=54321.0, sl=60000.0, known=True)
+    p1 = P(size=0.1, margin=122.79, tp=54321.0, sl=60000.0, known=True)
+    for ev in (Event("increase", "BTCUSDT", P(), p3), Event("tpsl", "BTCUSDT", p3, p3s),
+               Event("decrease", "BTCUSDT", p3s, p1)):
+        for auto in (False, True):                     # и в автомате вход посреди позиции — только кнопкой
+            (m,) = run(c.on_event(ev, 0.2, auto=auto))
+            assert [b[0] for b in m.buttons] == ["✅ Войти", "✖️ Не входить"], ev.kind
+            assert "У тебя копии нет" in m.text and "PnL Раста сейчас: +$" in m.text
+            assert "у тебя будет SHORT" in m.text and BTC not in ad.positions
+    # «Войти» — от его позиции на момент нажатия, со стопами
+    out = run(c.answer_offer(offer_id(m), True, rk(p1), 0.2))
+    assert ad.positions[BTC] == ("short", 0.02) and out[0].text.startswith("✅ Готово")
+    assert ad.stops[BTC] == {"tp": 54321.0, "sl": 60000.0, "amount": 0.02}
+
+
+def test_offer_entry_from_menu():
+    ad, c = make()
+    (m,) = run(c.offer_entry(("BTCUSDT", "short"), P(), 0.2))
+    assert [b[0] for b in m.buttons] == ["✅ Войти", "✖️ Не входить"]
+    assert "PnL Раста сейчас: +$114 (+46.6%)" in m.text and BTC not in ad.positions
+    run(c.answer_offer(offer_id(m), True, rk(P()), 0.2))
+    assert ad.positions[BTC] == ("short", 0.04)
+    (m,) = run(c.offer_entry(("BTCUSDT", "short"), P(), 0.2))
+    assert "уже" in m.text and not m.buttons
+    (m,) = run(c.offer_entry(("BTCUSDT", "long"), None, 0.2))
+    assert "нет" in m.text and not m.buttons
+
+
+def test_his_pnl_long_short_and_loss():
+    from copytrade.copier import his_pnl, pnl_str
+    assert pnl_str(*his_pnl(P(), 59000.0)) == "+$114 (+46.6%)"
+    assert pnl_str(*his_pnl(P(side="long"), 59000.0)) == "-$114 (-46.6%)"
+    assert pnl_str(*his_pnl(P(margin=None), 59571.7 - 25)) == "+$5.00"
+    assert his_pnl(P(), None) is None
+
+
+def test_offers_on_copied_position_show_his_pnl():
+    ad, c = make()
+    run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
+    (m,) = run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.4, margin=491.16)), 0.2, auto=False))
+    assert "PnL Раста сейчас: +$229 (+46.6%)" in m.text
+    (m,) = run(c.on_event(Event("close", "BTCUSDT", P(size=0.4, margin=491.16), None), None, auto=False))
+    assert "+$229" in m.text

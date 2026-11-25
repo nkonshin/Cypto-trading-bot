@@ -3,6 +3,7 @@
 Бот пишет настройки в общий том (copier-data/settings.json), копировщик пишет статус (status.json).
 Команды: /copy, /copy_mult 1.2, /copy_mode notify|demo|live|off.
 Кнопки уведомлений копировщика (copy:offer:<id>:yes|no) тоже приходят сюда.
+«➕ Войти …» (copy:enter:<монета>:<сторона>) — для позиций Раста без копии: копировщик пришлёт расчёт с кнопками.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
 from copytrade import shared
+from copytrade.copier import pnl_str
 
 MODE_NAMES = {"off": "выключено (только смотрю)", "notify": "уведомления без сделок",
               "demo": "демо-счёт BingX", "live": "ЖИВЫЕ ДЕНЬГИ BingX"}
@@ -64,8 +66,9 @@ def status_text() -> str:
         lev = f" ({p['leverage']}x)" if p.get("leverage") else ""
         tpsl = f" · TP {_f(p.get('tp'), 1)} / SL {_f(p.get('sl'), 1)}" if (p.get("tp") or p.get("sl")) else ""
         usd = f" (~${p['size'] * p['avg']:,.0f})".replace(",", " ") if p.get("avg") else ""
+        pnl = (f" · PnL {pnl_str(p['pnl'], p.get('pnl_pct'))}" if p.get("pnl") is not None else "")
         lines.append(f"Раст: {p['side'].upper()} {p['symbol']} {_f(p['size'])} {p['symbol'][:-4]}{usd} "
-                     f"по {_f(p.get('avg'), 1)}{lev}{tpsl}")
+                     f"по {_f(p.get('avg'), 1)}{lev}{pnl}{tpsl}")
     if not his:
         lines.append("Раст: позиций нет")
     ours = st.get("our_positions") or []
@@ -88,6 +91,17 @@ def status_text() -> str:
     return "\n".join(lines)
 
 
+def enter_buttons(s: dict) -> list:
+    """«➕ Войти» по каждой позиции Раста, у которой нет копии (если копировщик жив и не выключен)."""
+    st = shared.read_status()
+    if s["mode"] == "off" or not st or time.time() - st.get("updated", 0) > 30:
+        return []
+    ours = {(p.get("symbol"), p.get("side")) for p in st.get("our_positions") or []}
+    return [[InlineKeyboardButton(f"➕ Войти {p['side'].upper()} {p['symbol']}",
+                                  callback_data=f"copy:enter:{p['symbol']}:{p['side']}")]
+            for p in st.get("his_positions") or [] if (p["symbol"], p["side"]) not in ours]
+
+
 def keyboard() -> InlineKeyboardMarkup:
     s = shared.load_settings()
     modes = [InlineKeyboardButton(("● " if s["mode"] == m else "") + MODE_BTN[m], callback_data=f"copy:mode:{m}")
@@ -99,7 +113,7 @@ def keyboard() -> InlineKeyboardMarkup:
                      InlineKeyboardButton("⏸ 4 ч", callback_data="copy:pause:4h"),
                      InlineKeyboardButton("⏸ до 23:00", callback_data="copy:pause:23"),
                      InlineKeyboardButton("⏸ без срока", callback_data="copy:pause:inf")]
-    return InlineKeyboardMarkup([
+    return InlineKeyboardMarkup(enter_buttons(s) + [
         modes,
         pause_row,
         [InlineKeyboardButton("🤖 Авто: ВКЛ (выключить)" if s.get("auto") else "🤖 Авто: выкл (включить)",
@@ -175,7 +189,10 @@ class CopyPanel:
             except BadRequest:
                 pass
             return
-        if action == "mode":
+        if action == "enter":
+            shared.add_command("enter", symbol=parts[2], side=parts[3])
+            note = f"Пришлю расчёт входа в {parts[3].upper()} {parts[2]} с кнопками"
+        elif action == "mode":
             m = parts[2]
             if m == "live":
                 await q.answer()

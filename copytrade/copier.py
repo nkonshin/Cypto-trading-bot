@@ -7,6 +7,9 @@
 - Режим подтверждений (auto=False, по умолчанию): на каждое действие Раста — сообщение «Делаем / Не делаем».
   «Делаем» приводит копию к его ТЕКУЩЕЙ позиции (а не к той, что была в момент сообщения).
 - Автомат (auto=True): монеты из auto_symbols и уже подтверждённые копии ведутся сразу; новые монеты — кнопкой.
+- Позиция Раста без копии (отказался или пропустил): каждое его действие по ней приходит с кнопкой «Войти»,
+  и войти можно из /copy в любой момент. Посреди позиции бот сам не входит даже в автомате.
+- В сообщениях о его открытой позиции — его текущий PnL по живой цене BingX (как в его панели: $ и % от маржи).
 - Объём: его объём × k, где k считает App в момент сделки (наш баланс / его баланс × множитель).
   Добавка: его добавка × текущий k. Сокращение: наш объём уменьшается в той же доле, что у него.
 - Если наша позиция разошлась с ожидаемой (сработал наш стоп, ручное вмешательство), она «отцеплена»:
@@ -65,6 +68,24 @@ def qty(raw: str, amount: float, price: Optional[float]) -> str:
     return f"{fmt(amount)} {raw[:-4]}" + (f" ({d})" if d else "")
 
 
+def his_pnl(p: Pos, px: Optional[float]):
+    """Нереализованный PnL Раста по цене px: ($, % от маржи) — как в его панели, без комиссий."""
+    if not (px and p.avg and p.size):
+        return None
+    v = (px - p.avg) * p.size * (1 if p.side == "long" else -1)
+    return v, (v / p.margin * 100 if p.margin else None)
+
+
+def pnl_str(v: float, pct: Optional[float] = None) -> str:
+    """«+$172 (+46.6%)», «-$5.00»."""
+    a = abs(v)
+    num = f"{a:,.0f}".replace(",", " ") if a >= 10 else f"{a:.2f}"
+    out = f"{'+' if v >= 0 else '-'}${num}"
+    if pct is not None:
+        out += f" ({'+' if pct >= 0 else '-'}{abs(pct):.1f}%)"
+    return out
+
+
 def desc(p: Pos) -> str:
     lev = f" ({p.leverage}x)" if p.leverage else ""
     stops = f", TP {fmt(p.tp)} / SL {fmt(p.sl)}" if p.tpsl_known and (p.tp or p.sl) else ""
@@ -121,7 +142,7 @@ class Copier:
         self._drop_offers(key)                 # по позиции живо только последнее предложение
         o = Offer(uuid.uuid4().hex[:10], kind, key, time.time())
         self.offers[o.id] = o
-        return self._m(text + "\n(кнопки действуют 60 мин; «Делаем» подгонит копию под его позицию на момент нажатия)",
+        return self._m(text + f"\n(кнопки действуют 60 мин; «{yes}» — по его позиции на момент нажатия)",
                        (("✅ " + yes, f"copy:offer:{o.id}:yes"), ("✖️ " + no, f"copy:offer:{o.id}:no")))
 
     def _drop_offers(self, key: tuple) -> None:
@@ -137,7 +158,8 @@ class Copier:
             if o.kind == "close":
                 self.syms.pop(o.key, None)
                 return [self._m(f"Ок, {kname(o.key)} оставляю тебе, больше её не трогаю.")]
-            return [self._m(f"Ок, по {kname(o.key)} ничего не делаю.")]
+            return [self._m(f"Ок, по {kname(o.key)} ничего не делаю. Если Раст что-то поменяет в ней — "
+                            f"снова предложу войти; войти раньше — /copy.")]
         out = await self._sync(o.key, rast.get(o.key), k)
         return [self._m(("❌ " if "ОШИБКА" in m.text else "✅ Готово: ") + m.text[len(self._tag()):], m.buttons)
                 for m in out]
@@ -146,11 +168,52 @@ class Copier:
         info = self.ex.market(raw)
         return info.step if info else 0.0001
 
-    def _estimate(self, p: Pos, k: Optional[float]) -> str:
+    async def _live_px(self, p: Pos) -> Optional[float]:
+        """Текущая цена с BingX; не получилось — mark с его панели."""
+        info = self.ex.market(p.symbol)
+        if info is not None:
+            try:
+                return float(await self.ex.price(info.symbol))
+            except Exception as e:
+                log.warning("price %s: %r", p.symbol, e)
+        return p.mark
+
+    @staticmethod
+    def _pnl_line(p: Pos, px: Optional[float]) -> str:
+        r = his_pnl(p, px)
+        return f"PnL Раста сейчас: {pnl_str(*r)} при цене {fmt(px)}" if r else ""
+
+    async def _pnl_text(self, p: Pos) -> str:
+        """«PnL Раста сейчас: …» отдельной строкой (или пусто, если цены нет)."""
+        line = self._pnl_line(p, await self._live_px(p))
+        return f"\n{line}" if line else ""
+
+    async def _result_text(self, p: Pos) -> str:
+        """Итог закрытой позиции по текущей цене (≈ цене закрытия: событие приходит через секунды)."""
+        r = his_pnl(p, await self._live_px(p))
+        return f" Результат у него ~{pnl_str(*r)}." if r else ""
+
+    def _entry_offer(self, key: tuple, his: Pos, k: Optional[float], head: str, px: Optional[float],
+                     yes="Войти", no="Не входить") -> Msg:
+        pnl = self._pnl_line(his, px)
+        return self._offer("sync", key, f"{head}\nСейчас у него: {desc(his)}" + (f"\n{pnl}" if pnl else "")
+                           + f"\nВойти по рынку? {self._estimate(his, k, px)}.", yes=yes, no=no)
+
+    async def offer_entry(self, key: tuple, his: Optional[Pos], k: Optional[float]) -> list:
+        """Кнопка «Войти» из /copy: предложение войти в его текущую позицию."""
+        if his is None:
+            return [self._m(f"У Раста сейчас нет {kname(key)} — входить не во что.")]
+        st = self.syms.get(key)
+        if st is not None:
+            tail = " — она отцеплена, не трогаю" if st.detached else ""
+            return [self._m(f"{kname(key)}: копия уже есть ({fmt(st.expected)}){tail}.")]
+        return [self._entry_offer(key, his, k, f"{kname(key)} — у тебя копии нет.", await self._live_px(his))]
+
+    def _estimate(self, p: Pos, k: Optional[float], px: Optional[float] = None) -> str:
         if not k:
             return "объём посчитаю в момент нажатия"
         amt = floor_step(p.size * k, self._step(p.symbol))
-        px = p.mark or p.avg
+        px = px or p.mark or p.avg
         lev = min(p.leverage or self.default_leverage, self.max_leverage)
         margin = (", маржа ~$" + f"{amt * px / lev:,.0f}".replace(",", " ") + f" при {lev}x") if px else ""
         return f"у тебя будет {p.side.upper()} {qty(p.symbol, amt, px)}{margin} (k={k:.3f})"
@@ -162,16 +225,20 @@ class Copier:
         st = self.syms.get(key)
         if ev.kind == "close" and (st is None or st.detached):
             self._drop_offers(key)
+            res = await self._result_text(a)
             if st is not None:
                 self.syms.pop(key, None)
-                return [self._m(f"Раст закрыл {kname(key)}. Твою позицию не трогаю (она была отцеплена).")]
-            return [self._m(f"Раст закрыл {desc(a)} — её не копировали.")]
+                return [self._m(f"Раст закрыл {kname(key)}.{res} Твою позицию не трогаю (она была отцеплена).")]
+            return [self._m(f"Раст закрыл {desc(a)} — её не копировали.{res}")]
         if ev.kind in ("increase", "decrease", "tpsl") and not self.managed(key):
-            px = b.mark or b.avg
-            what = (f"TP {fmt(b.tp)} / SL {fmt(b.sl)}" if ev.kind == "tpsl"
-                    else f"{'добавил' if ev.kind == 'increase' else 'сократил'} "
+            px = await self._live_px(b)
+            what = (f"переставил {kname(key)}: TP {fmt(b.tp)} / SL {fmt(b.sl)}" if ev.kind == "tpsl"
+                    else f"{'добавил' if ev.kind == 'increase' else 'сократил'} {kname(key)}: "
                          f"{qty(s, a.size, px)} → {qty(s, b.size, px)}")
-            return [self._m(f"Раст: {kname(key)} {what} (эту позицию не копирую)")]
+            if st is not None:                         # отцеплена: Никита ведёт её сам
+                pnl = self._pnl_line(b, px)
+                return [self._m(f"Раст {what} (твоя позиция отцеплена, не трогаю)" + (f"\n{pnl}" if pnl else ""))]
+            return [self._entry_offer(key, b, k, f"Раст {what}. У тебя копии нет.", px)]
         if auto and (s in self.auto_symbols or self.managed(key)):
             self._drop_offers(key)
             if ev.kind == "tpsl":
@@ -182,7 +249,8 @@ class Copier:
             note = "" if s in self.auto_symbols else "\nЭто не BTC — только по подтверждению."
             return [self._offer("sync", key, f"Раст открыл {desc(b)}.{note}\nКопируем? {self._estimate(b, k)}.")]
         if ev.kind == "close":
-            return [self._offer("close", key, f"Раст закрыл {kname(key)}. Закрыть твою копию "
+            return [self._offer("close", key, f"Раст закрыл {kname(key)}.{await self._result_text(a)} "
+                                              f"Закрыть твою копию "
                                               f"({qty(s, st.expected, a.mark or a.avg)}) по рынку?",
                                 no="Оставить себе")]
         if ev.kind in ("increase", "decrease"):
@@ -191,13 +259,15 @@ class Copier:
                 after = st.expected + floor_step((b.size - st.his_size) * (k or 0), self._step(s))
             else:
                 after = floor_step(st.expected * b.size / st.his_size, self._step(s)) if st.his_size else st.expected
-            px = b.mark or b.avg
-            return [self._offer("sync", key, f"Раст {verb} {kname(key)}: {qty(s, a.size, px)} → {qty(s, b.size, px)}.\n"
+            px = await self._live_px(b)
+            pnl = self._pnl_line(b, px)
+            return [self._offer("sync", key, f"Раст {verb} {kname(key)}: {qty(s, a.size, px)} → {qty(s, b.size, px)}."
+                                             + (f"\n{pnl}" if pnl else "") + "\n"
                                              f"Делаем? Твоя копия станет ~{qty(s, after, px)} "
                                              f"(сейчас {qty(s, st.expected, px)}).")]
         if ev.kind == "tpsl":
-            return [self._offer("sync", key, f"Раст переставил {kname(key)}: TP {fmt(b.tp)} / SL {fmt(b.sl)}.\n"
-                                             f"Переставить у тебя так же?")]
+            return [self._offer("sync", key, f"Раст переставил {kname(key)}: TP {fmt(b.tp)} / SL {fmt(b.sl)}."
+                                             f"{await self._pnl_text(b)}\nПереставить у тебя так же?")]
         return []
 
     async def resync(self, rast: dict, k: Optional[float], reason: str) -> list:
@@ -216,8 +286,11 @@ class Copier:
             if self.managed(key):
                 lines.append(f"{kname(key)}: копия на месте ({fmt(self.syms[key].expected)}), продолжаю вести.")
             else:
-                msgs.append(self._offer("sync", key, f"У Раста открыт {desc(p)}, у тебя копии нет.\n"
-                                                     f"Открыть по рынку? {self._estimate(p, k)}.",
+                px = await self._live_px(p)
+                pnl = self._pnl_line(p, px)
+                msgs.append(self._offer("sync", key, f"У Раста открыт {desc(p)}, у тебя копии нет."
+                                                     + (f"\n{pnl}" if pnl else "") + "\n"
+                                                     f"Открыть по рынку? {self._estimate(p, k, px)}.",
                                         yes="Открыть", no="Не открывать"))
         for key in list(self.syms):
             if self.managed(key) and key not in rast:
