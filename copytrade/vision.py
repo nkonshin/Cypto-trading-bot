@@ -10,7 +10,7 @@ import numpy as np
 
 from copytrade.model import Box, Pos, Reading
 from copytrade.parse import (find_cards, parse_balance, parse_card, parse_form, parse_number, parse_tab,
-                             parse_tpsl, valid_tpsl)
+                             parse_tpsl, valid_tpsl, vote)
 
 REF_W, REF_H = 1720, 720
 # Координаты в эталонной раскладке (кадр short_btc_a). Панель «плавает» по вертикали, когда Раст меняет
@@ -100,24 +100,41 @@ class PanelReader:
                            (max(xs) - min(xs)) / scale, (max(ys) - min(ys)) / scale, text, float(conf)))
         return out
 
-    def _read_card(self, frame, cx, cy, boxes, sym_box, symbol):
-        """Одна карточка позиции; (cx, cy) — левый верхний угол вырезки, в которой лежат boxes."""
-        rect = (cx + SIZE_DX, cy + sym_box.y + SIZE_DY, SIZE_W, SIZE_H)
+    def _size_votes(self, frame, rect, panel_size):
+        """Дополнительные чтения объёма (×4, ×3, ×5) — до первых двух совпадений вместе с панелью."""
         votes = []
-        for sc in (3, 4, 5):            # объём ещё трижды; вместе с панелью — голосование (нужно ≥2 совпадения)
+        for sc in (4, 3, 5):
             sb = self.ocr_boxes(frame, rect, sc)
             votes.append(next((parse_number(b.text) for b in sb if b.conf >= 0.85 and parse_number(b.text)), None))
-        self.last_votes = votes
+            if vote([panel_size] + votes) is not None:
+                break
+        return votes
+
+    def _read_card(self, frame, cx, cy, boxes, sym_box, symbol, known=None):
+        """Одна карточка позиции; (cx, cy) — левый верхний угол вырезки, в которой лежат boxes.
+        known — уже подтверждённые позиции: если объём и маржа не изменились, лишние чтения объёма не нужны."""
         form_sym, form_lev = self.form(frame)
-        pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
-        if pos is None and "плечом" in why:            # вдруг он поменял плечо — перечитать форму сразу
-            form_sym, form_lev = self.form(frame, force=True)
-            pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
-        if pos is None:
-            return None, why
+        flev = form_lev if form_sym == symbol else None
         side = side_by_color(frame, int(cx + sym_box.x - 2), int(cy + sym_box.y + 11))
         if side is None:
             return None, "сторона не определена"
+        quick, _ = parse_card(boxes, sym_box, symbol, None, flev)
+        k = (known or {}).get((symbol, side))
+        if (quick is not None and k is not None and abs(quick.size - k.size) < 1e-9 and k.margin
+                and abs(quick.margin - k.margin) <= k.margin * 0.002):
+            pos, why = quick, ""
+            self.last_votes = "не нужны: позиция не менялась"
+        else:
+            panel_size = parse_card(boxes, sym_box, symbol, None, None)[0]
+            rect = (cx + SIZE_DX, cy + sym_box.y + SIZE_DY, SIZE_W, SIZE_H)
+            votes = self._size_votes(frame, rect, panel_size.size if panel_size else None)
+            self.last_votes = votes
+            pos, why = parse_card(boxes, sym_box, symbol, None, flev, votes)
+            if pos is None and "плечом" in why:        # вдруг он поменял плечо — перечитать форму сразу
+                form_sym, form_lev = self.form(frame, force=True)
+                pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
+        if pos is None:
+            return None, why
         tp = sl = None
         known = False
         tb = self.ocr_boxes(frame, (cx + TPSL_DX, cy + sym_box.y + TPSL_DY, TPSL_W, TPSL_H), TPSL_SCALE)
@@ -127,7 +144,7 @@ class PanelReader:
             known = True
         return Pos(pos.symbol, side, pos.size, pos.avg, pos.margin, pos.mark, tp, sl, known, pos.lev), ""
 
-    def read(self, frame: np.ndarray, with_balance: bool = False) -> Reading:
+    def read(self, frame: np.ndarray, with_balance: bool = False, known: dict = None) -> Reading:
         now = time.time()
         frame = to_ref(frame)
         balance = None
@@ -150,7 +167,7 @@ class PanelReader:
         if len(cards) != 1:
             return Reading(False, (), n, balance, "карточка позиции не найдена", now)
         sym_box, symbol = cards[0]
-        pos, why = self._read_card(frame, px0, py0, boxes, sym_box, symbol)
+        pos, why = self._read_card(frame, px0, py0, boxes, sym_box, symbol, known)
         if pos is None:
             return Reading(False, (), n, balance, why, now)
         positions = [pos]
@@ -162,7 +179,7 @@ class PanelReader:
             cs = find_cards(cb)
             if len(cs) != 1:
                 return Reading(False, (), n, balance, f"карточка позиции №{i + 1} не найдена", now)
-            p, why = self._read_card(frame, px0, top, cb, cs[0][0], cs[0][1])
+            p, why = self._read_card(frame, px0, top, cb, cs[0][0], cs[0][1], known)
             if p is None:
                 return Reading(False, (), n, balance, f"позиция №{i + 1}: {why}", now)
             positions.append(p)

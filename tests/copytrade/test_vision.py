@@ -107,3 +107,12 @@ def test_real_hedge_frame_two_cards(reader):
     assert (pos["short"].size, pos["short"].avg, pos["short"].leverage) == (0.2, 58967.2, 50)
     assert (pos["short"].tp, pos["short"].sl) == (54321.0, 59300.0)
     assert (pos["long"].tp, pos["long"].sl) == (None, 58250.0)
+
+
+def test_unchanged_position_skips_extra_size_reads(reader):
+    f = cv2.imread(os.path.join(FX, "hedge_long02_short02.jpg"))
+    first = reader.read(f)
+    known = {(p.symbol, p.side): p for p in first.positions}
+    again = reader.read(f, known=known)
+    assert again.ok and reader.last_votes == "не нужны: позиция не менялась"
+    assert {(p.side, p.size) for p in again.positions} == {("long", 0.2), ("short", 0.2)}

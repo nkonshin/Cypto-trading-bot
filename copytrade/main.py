@@ -24,7 +24,7 @@ from copytrade.vision import ChangeDetector, PanelReader
 
 log = logging.getLogger("copier")
 CHANNEL = os.environ.get("COPY_CHANNEL", "rastpentagon")
-HEARTBEAT_OK, HEARTBEAT_BLIND, BALANCE_EVERY = 30, 20, 300
+HEARTBEAT_OK, HEARTBEAT_BLIND, BALANCE_EVERY = 60, 20, 300
 HIS_BALANCE_MAX_AGE = 15 * 60
 ALERT_AFTER = 180
 PAUSE_REMIND_EVERY = 3 * 3600
@@ -205,16 +205,18 @@ class App:
         pending = (self.tracker._cand_key is not None and self.tracker.confirmed is not None
                    and self.tracker._cand_key != _key(self.tracker.confirmed.values()))
         changed = self.detector.changed(frame)
-        need = (changed or pending or self.tracker.confirmed is None
-                or now - self.last_ocr > (HEARTBEAT_OK if ok else HEARTBEAT_BLIND))
-        if not need:
+        why = ("изменение" if changed else "подтверждение" if pending else "старт" if self.tracker.confirmed is None
+               else "контроль" if now - self.last_ocr > (HEARTBEAT_OK if ok else HEARTBEAT_BLIND) else "")
+        if not why:
             return
         # баланс читаем при любом изменении панели: к моменту сделки он должен быть свежим
         with_bal = changed or pending or now - self.last_balance > BALANCE_EVERY
+        known = self.rast_now()
         if loop is None:
-            reading = self.reader.read(frame, with_bal)
+            reading = self.reader.read(frame, with_bal, known)
         else:
-            reading = await loop.run_in_executor(None, self.reader.read, frame, with_bal)
+            reading = await loop.run_in_executor(None, self.reader.read, frame, with_bal, known)
+        log.info("OCR (%s) %.1f с: %s", why, time.time() - now, "ok" if reading.ok else reading.reason)
         self.last_ocr = now
         self.detector.remember(frame)
         if reading.balance:
