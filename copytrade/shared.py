@@ -9,6 +9,7 @@ DATA_DIR = os.environ.get("COPIER_DATA", "/app/copier_data")
 MODES = ("off", "notify", "demo", "live")
 DEFAULTS = {
     "mode": "notify",          # off | notify | demo | live
+    "auto": False,             # False — каждое действие с кнопками «Делаем/Не делаем»; True — BTC сам
     "mult": 1.0,               # объём = его объём × (наш баланс / его баланс) × mult
     "auto_symbols": ["BTCUSDT"],   # копируются сами; остальные монеты — через кнопку
     "paused_until": 0,         # 0 — не на паузе, -1 — бессрочно, иначе unix-время окончания

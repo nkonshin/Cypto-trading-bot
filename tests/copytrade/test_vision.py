@@ -46,6 +46,7 @@ GOLDEN = {   # кадр → (сторона, объём, средняя) — ч�
     "srv_short_04_zero_glitch": ("short", 0.4, 59345.0),    # на сервере OCR прочитал объём как «04000»
     "srv_short_04_unit_glitch": ("short", 0.4, 59345.0),    # подпись «Poions 0BTC)»
     "srv_short_04_usot_glitch": ("short", 0.4, 59345.0),    # монета «BTCUSOT»
+    "srv_short_04_lowconf": ("short", 0.4, 58967.2),        # объём «0.4000» с conf 0.84 — бот слеп 24 мин
 }
 
 
@@ -58,6 +59,11 @@ def test_never_wrong_on_real_frames(reader, name):
         assert (p.side, p.size, p.avg) == GOLDEN[name]
         if p.tpsl_known:
             assert p.tp == 54321.0 and p.sl in (59750.0, 59600.0, 59400.0)
+
+
+def test_low_confidence_size_now_read(reader):
+    r = reader.read(cv2.imread(os.path.join(FX, "srv_short_04_lowconf.jpg")))
+    assert r.ok, r.reason
 
 
 def test_anchor_rejects_ad_frame():

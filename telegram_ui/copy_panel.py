@@ -48,7 +48,8 @@ def status_text() -> str:
     pz = pause_text(s.get("paused_until"))
     lines = ["📡 Копирование сделок Раста",
              f"Режим: {MODE_NAMES.get(s['mode'], s['mode'])}" + (f" · ⏸ {pz}" if pz else ""),
-             f"Автомат: {', '.join(s['auto_symbols'])}; остальное — с подтверждением",
+             ("Автомат: " + ", ".join(s["auto_symbols"]) + " сам, остальное — с подтверждением" if s.get("auto")
+              else "Подтверждение: каждое действие Раста приходит с кнопками «Делаем / Не делаем»"),
              f"Объём = его объём × (твой баланс / его баланс) × {s['mult']}"]
     if not st or age is None or age > 30:
         lines.append("\n⚠️ Копировщик не отвечает" + (f" ({int(age)} с)" if age else "") + ".")
@@ -95,6 +96,8 @@ def keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         modes,
         pause_row,
+        [InlineKeyboardButton("🤖 Авто: ВКЛ (выключить)" if s.get("auto") else "🤖 Авто: выкл (включить)",
+                              callback_data="copy:auto")],
         [InlineKeyboardButton("× −0.1", callback_data="copy:mult:-"),
          InlineKeyboardButton(f"множитель {s['mult']}", callback_data="copy:refresh"),
          InlineKeyboardButton("× +0.1", callback_data="copy:mult:+")],
@@ -185,6 +188,11 @@ class CopyPanel:
         elif action == "resume":
             shared.save_settings(paused_until=0)
             note = "▶️ Продолжаю, сверка позиций придёт сообщением"
+        elif action == "auto":
+            v = not shared.load_settings().get("auto")
+            shared.save_settings(auto=v)
+            note = ("🤖 Автомат включён: BTC копируется сам" if v
+                    else "Автомат выключен: каждое действие — с кнопками «Делаем / Не делаем»")
         elif action == "mult":
             m = shared.load_settings()["mult"] + (0.1 if parts[2] == "+" else -0.1)
             m = round(min(3.0, max(0.1, m)), 3)

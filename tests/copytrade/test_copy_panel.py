@@ -118,3 +118,15 @@ def test_status_text_renders_live_status():
     assert "Баланс: его 815.65 · твой 200 USDT · k сейчас 0.245" in t
     shared.save_settings(paused_until=-1)
     assert "на паузе без срока" in status_text()
+
+
+
+def test_auto_toggle():
+    p = panel()
+    assert shared.load_settings()["auto"] is False
+    u, ctx = cb_update(ADMIN, "copy:auto")
+    run(p.on_callback(u, ctx))
+    assert shared.load_settings()["auto"] is True
+    u, ctx = cb_update(FATHER, "copy:auto")
+    run(p.on_callback(u, ctx))
+    assert shared.load_settings()["auto"] is True

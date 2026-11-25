@@ -130,13 +130,14 @@ def parse_card(boxes, sym_box: Box, symbol: str):
     if base not in unit and ("CONT" in unit or "USDT" in unit or "张" in size_label.text):
         return None, f"объём не в монетах ({unit})"
     row = _row_below(boxes, size_label)
-    size = _num_in(row, 0, 60)
+    # порог ниже общего: «0.4000» часто приходит с conf 0.84; от ошибок защищает сверка с плечом ниже
+    size = _num_in(row, 0, 60, 0.75)
     margin = _num_in(row, 90, 200, 0.85)
     avg_label = next((b for b in boxes if cy + 45 <= b.y <= cy + 70 and b.x < 60 and "aver" in b.text.lower()), None)
     if avg_label is None:
         return None, "нет подписи средней цены"
     row2 = _row_below(boxes, avg_label)
-    avg = _num_in(row2, 0, 60)
+    avg = _num_in(row2, 0, 60, 0.85)
     mark = _num_in(row2, 90, 200, 0.85)
     if size is None or size <= 0:
         return None, "объём не прочитан"

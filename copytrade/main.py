@@ -153,7 +153,8 @@ class App:
             self.mode = None
         prev, self.mode = self.mode, mode
         self.load_copies()
-        await self.tg.send(f"Режим копирования: {MODE_NAMES[mode]}. Множитель {self.settings['mult']}"
+        auto = "автомат по BTC" if self.settings.get("auto") else "каждое действие с подтверждением"
+        await self.tg.send(f"Режим копирования: {MODE_NAMES[mode]}, {auto}. Множитель {self.settings['mult']}"
                            + ("" if prev is None else f" (было: {prev})"))
         if self.copier and self.tracker.confirmed is not None and not is_paused(self.settings):
             await self._send(await self.copier.resync(self.rast_now(), await self.k_now(), "Сверка позиций:"))
@@ -264,7 +265,7 @@ class App:
             await self._send([f"{'⏸ ' if self.copier else ''}Раст {what} ({why})"])
             return
         k = await self.k_now() if ev.kind in ("open", "flip", "increase") else None
-        await self._send(await self.copier.on_event(ev, k))
+        await self._send(await self.copier.on_event(ev, k, auto=bool(self.settings.get("auto"))))
 
     async def apply_settings(self) -> None:
         s = shared.load_settings()
@@ -329,8 +330,10 @@ class App:
                 reason = self.tracker.last_reading.reason if self.tracker.last_reading else "ещё не читал"
                 if blind > ALERT_AFTER and now - self.started > ALERT_AFTER and not self.blind_alerted:
                     self.blind_alerted = True
+                    copies = bool(self.copier and self.copier.syms)
+                    tail = ("твои копии стоят под скопированными стопами." if copies else "копий у тебя нет.")
                     await self.tg.send(f"Не вижу панель позиции Раста больше 3 мин ({reason}). "
-                                       f"Ничего не делаю, твои позиции стоят под скопированными стопами.")
+                                       f"Ничего не делаю, {tail}")
                 elif blind < 30 and self.blind_alerted:
                     self.blind_alerted = False
                     await self.tg.send("Снова вижу панель позиции.")
@@ -364,6 +367,7 @@ class App:
             k = self.our_equity / self.his_balance * float(self.settings["mult"])
         shared.write_status({
             "mode": self.mode, "mult": self.settings["mult"], "k": k, "online": self.source.online,
+            "auto": bool(self.settings.get("auto")),
             "seen_ok": bool(lr and lr.ok), "reason": lr.reason if lr else "", "blind_for": t.blind_for(),
             "his_positions": his, "his_balance": self.his_balance, "our_positions": ours,
             "our_equity": self.our_equity, "paused_until": self.settings.get("paused_until") or 0,

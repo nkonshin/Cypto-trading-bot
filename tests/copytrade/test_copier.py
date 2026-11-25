@@ -52,10 +52,10 @@ def test_other_coin_is_offered_not_opened():
     msgs = run(c.on_event(Event("open", "ETHUSDT", None, eth), 0.25))
     assert ETH not in ad.positions
     (m,) = msgs
-    assert "Это не BTC" in m.text and [b[0] for b in m.buttons] == ["Открыть", "Пропустить"]
+    assert "Это не BTC" in m.text and [b[0] for b in m.buttons] == ["✅ Делаем", "✖️ Не делаем"]
     oid = m.buttons[0][1].split(":")[2]
     out = run(c.answer_offer(oid, True, {"ETHUSDT": eth}, 0.25))
-    assert ad.positions[ETH] == ("long", 0.5) and "с опозданием" in out[0].text
+    assert ad.positions[ETH] == ("long", 0.5) and out[0].text.startswith("✅ Готово")
     # после подтверждения монета ведётся автоматически: Раст закрыл — закрываем
     run(c.on_event(Event("close", "ETHUSDT", eth, None), 0.25))
     assert ad.positions[ETH] == (None, 0.0)
@@ -66,14 +66,14 @@ def test_offer_skip_expired_and_stale():
     eth = P(side="long", size=2.0, sym="ETHUSDT", avg=3000.0, margin=120.0)
     (m,) = run(c.on_event(Event("open", "ETHUSDT", None, eth), 0.25))
     oid = m.buttons[1][1].split(":")[2]
-    assert "пропускаю" in run(c.answer_offer(oid, False, {"ETHUSDT": eth}, 0.25))[0].text
+    assert "ничего не делаю" in run(c.answer_offer(oid, False, {"ETHUSDT": eth}, 0.25))[0].text
     (m,) = run(c.on_event(Event("open", "ETHUSDT", None, eth), 0.25))
     oid = m.buttons[0][1].split(":")[2]
     c.offers[oid].created -= OFFER_TTL + 1
     assert "неактуально" in run(c.answer_offer(oid, True, {"ETHUSDT": eth}, 0.25))[0].text
     (m,) = run(c.on_event(Event("open", "ETHUSDT", None, eth), 0.25))
     oid = m.buttons[0][1].split(":")[2]
-    assert "уже закрыл" in run(c.answer_offer(oid, True, {}, 0.25))[0].text   # Раст успел закрыть
+    assert "делать нечего" in run(c.answer_offer(oid, True, {}, 0.25))[0].text   # Раст успел закрыть
     assert ETH not in ad.positions
 
 
@@ -167,12 +167,12 @@ def test_resync_offers_open_and_close():
     assert "Позиций нет ни у Раста, ни у тебя" in m.text
     # у Раста есть, у нас нет → предложение открыть
     msgs = run(c.resync({"BTCUSDT": P(size=0.4)}, 0.2, "Сверка:"))
-    assert len(msgs) == 2 and "Открыть пропорционально" in msgs[1].text and msgs[1].buttons
+    assert len(msgs) == 2 and "Открыть по рынку" in msgs[1].text and msgs[1].buttons
     # у нас копия, Раст закрыл во время паузы → предложение закрыть / оставить себе
     run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
     msgs = run(c.resync({}, 0.2, "Сверка:"))
     offer = msgs[-1]
-    assert "Закрыть?" in offer.text and [b[0] for b in offer.buttons] == ["Закрыть копию", "Оставить себе"]
+    assert "Закрыть?" in offer.text and [b[0] for b in offer.buttons] == ["✅ Закрыть", "✖️ Оставить себе"]
     oid = offer.buttons[1][1].split(":")[2]
     run(c.answer_offer(oid, False, {}, 0.2))
     assert ad.positions[BTC] == ("short", 0.04) and "BTCUSDT" not in c.syms     # оставили себе
@@ -203,3 +203,69 @@ def test_never_merges_copy_into_own_manual_position():
     ad.positions[BTC] = ("short", 0.01)                # и для автоматического BTC тоже
     out = run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
     assert "своя позиция" in out[0].text and ad.positions[BTC] == ("short", 0.01)
+
+
+
+# ---------- режим подтверждений (auto=False) ----------
+
+def offer_id(msg, yes=True):
+    return msg.buttons[0 if yes else 1][1].split(":")[2]
+
+
+def test_confirm_mode_btc_open_waits_for_button():
+    ad, c = make()
+    (m,) = run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.4, margin=474.1)), 0.2, auto=False))
+    assert BTC not in ad.positions and "Копируем?" in m.text and "~0.08" in m.text
+    out = run(c.answer_offer(offer_id(m), True, {"BTCUSDT": P(size=0.4, margin=474.1)}, 0.15))
+    assert ad.positions[BTC] == ("short", 0.06)                # k на момент нажатия
+    assert out[0].text.startswith("✅ Готово") and "открыл SHORT 0.06" in out[0].text
+
+
+def test_confirm_uses_his_current_position_not_the_old_one():
+    ad, c = make()
+    (m,) = run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.2)), 0.2, auto=False))
+    # пока Никита не нажал, Раст долил до 0.4 — «Делаем» откроет уже от 0.4
+    run(c.answer_offer(offer_id(m), True, {"BTCUSDT": P(size=0.4)}, 0.2))
+    assert ad.positions[BTC] == ("short", 0.08)
+
+
+def test_confirm_resize_and_close_and_decline():
+    ad, c = make()
+    run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.2)), 0.2))          # открыта копия 0.04
+    (m,) = run(c.on_event(Event("increase", "BTCUSDT", P(size=0.2), P(size=0.4)), 0.2, auto=False))
+    assert "станет ~0.08" in m.text and ad.positions[BTC] == ("short", 0.04)
+    assert "ничего не делаю" in run(c.answer_offer(offer_id(m, False), False, {}, 0.2))[0].text
+    (m,) = run(c.on_event(Event("decrease", "BTCUSDT", P(size=0.4), P(size=0.1)), None, auto=False))
+    run(c.answer_offer(offer_id(m), True, {"BTCUSDT": P(size=0.1)}, None))
+    assert ad.positions[BTC] == ("short", 0.02)                # 0.04 × 0.1/0.2 (его 0.4 мы не повторяли)
+    (m,) = run(c.on_event(Event("close", "BTCUSDT", P(size=0.1), None), None, auto=False))
+    assert [b[0] for b in m.buttons] == ["✅ Делаем", "✖️ Оставить себе"]
+    run(c.answer_offer(offer_id(m), True, {}, None))
+    assert ad.positions[BTC] == (None, 0.0)
+
+
+def test_confirm_close_keep_for_yourself():
+    ad, c = make()
+    run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
+    (m,) = run(c.on_event(Event("close", "BTCUSDT", P(), None), None, auto=False))
+    out = run(c.answer_offer(offer_id(m, False), False, {}, None))
+    assert "оставляю тебе" in out[0].text and ad.positions[BTC] == ("short", 0.04) and "BTCUSDT" not in c.syms
+
+
+def test_confirm_tpsl_move():
+    ad, c = make()
+    run(c.on_event(Event("open", "BTCUSDT", None, P(tp=54321.0, sl=59750.0, known=True)), 0.2))
+    new = P(tp=54321.0, sl=59400.0, known=True)
+    (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", P(), new), None, auto=False))
+    assert "Переставить" in m.text and ad.stops[BTC]["sl"] == 59750.0
+    run(c.answer_offer(offer_id(m), True, {"BTCUSDT": new}, None))
+    assert ad.stops[BTC]["sl"] == 59400.0
+
+
+def test_newer_offer_supersedes_older():
+    ad, c = make()
+    (m1,) = run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.2)), 0.2, auto=False))
+    (m2,) = run(c.on_event(Event("flip", "BTCUSDT", P(size=0.2), P(side="long", size=0.1)), 0.2, auto=False))
+    assert "неактуально" in run(c.answer_offer(offer_id(m1), True, {}, 0.2))[0].text
+    run(c.answer_offer(offer_id(m2), True, {"BTCUSDT": P(side="long", size=0.1)}, 0.2))
+    assert ad.positions[BTC] == ("long", 0.02)

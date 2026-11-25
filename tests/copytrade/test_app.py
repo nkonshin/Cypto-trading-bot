@@ -55,6 +55,8 @@ def test_k_from_current_balances_and_multiplier(app):
 
 
 def test_open_uses_balance_ratio(app):
+    shared.save_settings(auto=True)
+    asyncio.run(app.apply_settings())
     confirm(app, P())
     asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))
     assert app.adapter.positions[BTC] == ("short", 0.0888)
@@ -72,7 +74,7 @@ def test_pause_blocks_trading_and_resume_offers_entry(app):
     shared.save_settings(paused_until=0)
     asyncio.run(app.apply_settings())
     last = app.tg.sent[-1]
-    assert "Открыть пропорционально" in last.text and last.buttons
+    assert "Открыть по рынку" in last.text and last.buttons
     # нажатие кнопки приходит командой из бота
     oid = last.buttons[0][1].split(":")[2]
     shared.add_command("offer", offer=oid, yes=True)
@@ -90,7 +92,8 @@ def test_timed_pause_expires_by_itself(app):
 
 def test_old_commands_are_not_replayed_after_restart(app):
     cmds = [{"id": "x1", "t": time.time() - 3600, "name": "close_all"}]
-    shared.save_settings(commands=cmds)
+    shared.save_settings(commands=cmds, auto=True)
+    asyncio.run(app.apply_settings())
     asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))
     asyncio.run(app.apply_settings())
     assert app.adapter.positions[BTC][1] > 0         # часовой давности close_all не выполнился
@@ -98,6 +101,8 @@ def test_old_commands_are_not_replayed_after_restart(app):
 
 def test_copies_survive_restart_in_live_modes(app, tmp_path):
     from copytrade import main as m
+    shared.save_settings(auto=True)
+    asyncio.run(app.apply_settings())
     asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))
     app.mode = "demo"                              # делаем вид, что это биржевой режим
     app.save_copies()
@@ -118,3 +123,17 @@ def test_commands_from_before_start_are_not_executed(tmp_path, monkeypatch):
     from copytrade import main as m
     a = m.App(source=object(), reader=object(), notifier=FakeTG())
     assert shared.load_settings()["commands"][0]["id"] in a.done_commands
+
+
+
+def test_default_is_confirm_each_action(app):
+    assert shared.load_settings()["auto"] is False
+    confirm(app, P())
+    asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))
+    assert BTC not in app.adapter.positions
+    last = app.tg.sent[-1]
+    assert "Копируем?" in last.text and last.buttons
+    shared.add_command("offer", offer=last.buttons[0][1].split(":")[2], yes=True)
+    asyncio.run(app.apply_settings())
+    assert app.adapter.positions[BTC] == ("short", 0.0888)
+    assert app.tg.sent[-1].text.startswith("[тест] ✅ Готово")
