@@ -40,6 +40,12 @@ def main_user_id():
     return int(allowed[0]) if allowed else None
 
 
+def keyboard_rows(buttons) -> list:
+    """Две кнопки — в ряд; три и больше — каждая на своей строке (длинные надписи не обрезаются)."""
+    btns = [{"text": t, "callback_data": d} for t, d in buttons]
+    return [btns] if len(btns) <= 2 else [[b] for b in btns]
+
+
 class Notifier:
     def __init__(self):
         self.token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
@@ -52,7 +58,7 @@ class Notifier:
             return
         body = {"chat_id": self.chat, "text": "📡 " + msg.text, "disable_web_page_preview": True}
         if msg.buttons:
-            body["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in msg.buttons]]}
+            body["reply_markup"] = {"inline_keyboard": keyboard_rows(msg.buttons)}
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15),
                                              connector=aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())) as s:
@@ -93,6 +99,7 @@ class App:
         self.frame = None
         self.last_reason = ""
         self.was_paused = is_paused(self.settings)
+        self.was_auto = bool(self.settings.get("auto"))
         self.pause_reminded = time.time()
 
     # ---------- пропорция ----------
@@ -297,6 +304,13 @@ class App:
         if not paused and self.was_paused and self.copier:
             reason = "▶️ Пауза закончилась, продолжаю копирование. Сверка позиций:"
             await self._send(await self.copier.resync(self.rast_now(), await self.k_now(), reason))
+        # включили автомат — сразу сверка: что у Раста, что у тебя (свою позицию можно взять в копию кнопкой)
+        auto = bool(s.get("auto"))
+        if auto and not self.was_auto and not mode_changed and not paused and self.copier \
+                and self.tracker.confirmed is not None:
+            await self._send(await self.copier.resync(self.rast_now(), await self.k_now(),
+                                                      "🤖 Автомат включён. Сверка позиций:"))
+        self.was_auto = auto
         if paused and pu == -1 and now - self.pause_reminded > PAUSE_REMIND_EVERY:
             self.pause_reminded = now
             await self.tg.send("⏸ Напоминаю: копирование на паузе. /copy — продолжить.")
@@ -316,7 +330,8 @@ class App:
                 await self._send(await self.copier.offer_entry(key, self.rast_now().get(key), await self.k_now()))
             elif cmd.get("name") == "offer" and self.copier:
                 await self._send(await self.copier.answer_offer(cmd["offer"], bool(cmd.get("yes")),
-                                                                self.rast_now(), await self.k_now()))
+                                                                self.rast_now(), await self.k_now(),
+                                                                cmd.get("choice")))
 
     async def settings_loop(self) -> None:
         while True:

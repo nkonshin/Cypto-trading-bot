@@ -210,11 +210,15 @@ def test_never_merges_copy_into_own_manual_position():
     ad.positions[ETH] = ("long", 2.43)                 # как на реальном счёте Никиты
     eth = P(side="long", size=2.0, sym="ETHUSDT", avg=3000.0, margin=120.0)
     (m,) = run(c.on_event(Event("open", "ETHUSDT", None, eth), 0.25))
-    oid = m.buttons[0][1].split(":")[2]
-    out = run(c.answer_offer(oid, True, rk(eth), 0.25))
-    assert "своя позиция" in out[0].text and ad.positions[ETH] == ("long", 2.43)
+    assert labels(m) == ["✅ Вести как копию", "✖️ Не трогать"]       # не «Делаем»: поверх своей не открываю
     ad.positions[BTC] = ("short", 0.01)                # и для автоматического BTC тоже
-    out = run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
+    (m,) = run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
+    assert labels(m) == ["✅ Вести как копию", "✖️ Не трогать"] and ad.positions[BTC] == ("short", 0.01)
+    # если своя позиция появилась уже после предложения «Войти» — _open всё равно не сольёт
+    ad.positions[BTC] = (None, 0.0)
+    (m,) = run(c.offer_entry(("BTCUSDT", "short"), P(), 0.2))
+    ad.positions[BTC] = ("short", 0.01)
+    out = run(c.answer_offer(offer_id(m), True, rk(P()), 0.2))
     assert "своя позиция" in out[0].text and ad.positions[BTC] == ("short", 0.01)
 
 
@@ -367,3 +371,120 @@ def test_pnl_percent_is_from_initial_margin_like_his_panel():
     p = Pos("BTCUSDT", "long", 0.4, 57903.3, 662.6963, 58114.7, lev=50)
     v, pct = his_pnl(p, 58114.7)
     assert round(v, 2) == 84.56 and round(pct, 2) == 18.25
+
+
+
+# ---------- у Никиты уже есть своя позиция по монете ----------
+
+def hedge(price=58700.0):
+    ad = PaperAdapter(markets={BTC: MarketInfo(BTC, 0.0001, 0.0001)}, price_fn=lambda s: price, hedged=True)
+    ad.name = "live"
+    return ad, Copier(ad)
+
+
+LONG4 = P(side="long", size=0.4, avg=57903.3, margin=463.23)
+
+
+def labels(m):
+    return [b[0] for b in m.buttons]
+
+
+def test_own_opposite_position_offers_close_and_enter():
+    for auto in (False, True):                        # и в автомате: при твоей встречной позиции — только кнопкой
+        ad, c = hedge()
+        ad.hpos[(BTC, "short")] = 0.05                # твой ручной шорт
+        (m,) = run(c.on_event(Event("open", "BTCUSDT", None, LONG4), 0.15, auto=auto))
+        assert m.text.startswith("⚠️") and "у тебя открыт свой SHORT BTCUSDT 0.05 BTC" in m.text
+        assert labels(m) == ["✅ Закрыть SHORT и войти в LONG", "Войти, SHORT оставить", "✖️ Ничего"]
+        assert m.buttons[1][1].endswith(":keep") and ad.hpos == {(BTC, "short"): 0.05}
+    out = run(c.answer_offer(offer_id(m), True, rk(LONG4), 0.15, choice="yes"))
+    assert ad.hpos == {(BTC, "long"): 0.06}
+    assert "закрыл твой SHORT 0.05 BTC" in out[0].text and "открыл LONG 0.06" in out[1].text
+    assert set(c.syms) == {("BTCUSDT", "long")}       # копией считается только лонг
+
+
+def test_own_opposite_keep_it_and_enter():
+    ad, c = hedge()
+    ad.hpos[(BTC, "short")] = 0.05
+    (m,) = run(c.on_event(Event("open", "BTCUSDT", None, LONG4), 0.15, auto=False))
+    run(c.answer_offer(m.buttons[1][1].split(":")[2], True, rk(LONG4), 0.15, choice="keep"))
+    assert ad.hpos == {(BTC, "short"): 0.05, (BTC, "long"): 0.06}
+    # Раст открыл и шорт: твой шорт — в ту же сторону (предложу вести как копию), а копия лонга — не «твоя»
+    (m,) = run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.2)), 0.15, auto=False))
+    assert labels(m) == ["✅ Вести как копию", "✖️ Не трогать"]
+
+
+def test_own_same_side_position_is_offered_to_be_followed_as_copy():
+    for auto in (False, True):
+        ad, c = hedge()
+        ad.hpos[(BTC, "long")] = 0.03
+        (m,) = run(c.on_event(Event("open", "BTCUSDT", None, LONG4), 0.15, auto=auto))
+        assert m.text.startswith("⚠️") and "уже открыт свой LONG BTCUSDT 0.03 BTC" in m.text
+        assert labels(m) == ["✅ Вести как копию", "✖️ Не трогать"] and ad.hpos == {(BTC, "long"): 0.03}
+    out = run(c.answer_offer(offer_id(m, False), False, rk(LONG4), 0.15))
+    assert "не трогаю" in out[0].text and not c.syms
+
+
+def test_adopted_position_keeps_size_and_follows_reduce_and_close():
+    """Как просил Никита 25.11: свой LONG BTC остаётся своего размера, но сокращается и закрывается за Растом."""
+    ad, c = hedge()
+    ad.hpos[(BTC, "long")] = 0.03
+    his = P(side="long", size=0.4, avg=57903.3, margin=463.23, tp=61222.0, sl=56665.0, known=True)
+    msgs = run(c.resync(rk(his), 0.15, "🤖 Автомат включён. Сверка позиций:"))
+    m = msgs[-1]
+    assert labels(m) == ["✅ Вести как копию", "✖️ Не трогать"]
+    out = run(c.answer_offer(offer_id(m), True, rk(his), 0.15))
+    assert "Готово" in out[0].text and "0.03" in out[0].text
+    assert c.syms[("BTCUSDT", "long")].expected == 0.03 and ad.hpos == {(BTC, "long"): 0.03}
+    assert ad.stops[BTC] == {"tp": 61222.0, "sl": 56665.0, "amount": 0.03}       # его стопы на весь объём
+    half = P(side="long", size=0.2, avg=57903.3, margin=231.6)
+    run(c.on_event(Event("decrease", "BTCUSDT", his, half), None, auto=True))
+    assert ad.hpos == {(BTC, "long"): 0.015} and ad.stops[BTC]["amount"] == 0.015
+    run(c.on_event(Event("increase", "BTCUSDT", half, his), 0.15, auto=True))  # долил +0.2 → +0.2 × k
+    assert ad.hpos == {(BTC, "long"): 0.045}
+    run(c.on_event(Event("close", "BTCUSDT", his, None), None, auto=True))
+    assert ad.hpos == {} and not c.syms
+
+
+def test_detached_copy_can_be_followed_again():
+    ad, c = hedge()
+    run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))              # копия 0.04
+    ad.hpos[(BTC, "short")] = 0.06                                         # долил руками → отцепится
+    run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.3)), 0.2))
+    assert c.syms[("BTCUSDT", "short")].detached
+    (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", P(size=0.3), P(size=0.3, tp=54321.0, known=True)), 0.2))
+    assert labels(m) == ["✅ Вести как копию", "✖️ Не трогать"]
+    run(c.answer_offer(offer_id(m), True, rk(P(size=0.3, tp=54321.0, known=True)), 0.2))
+    st = c.syms[("BTCUSDT", "short")]
+    assert not st.detached and st.expected == 0.06 and st.his_size == 0.3
+
+
+def test_one_way_account_offers_only_close_and_enter():
+    ad, c = make(price=58700.0)
+    ad.positions[BTC] = ("short", 0.05)
+    (m,) = run(c.on_event(Event("open", "BTCUSDT", None, LONG4), 0.15, auto=False))
+    assert labels(m) == ["✅ Закрыть SHORT и войти в LONG", "✖️ Ничего"]
+    run(c.answer_offer(offer_id(m), True, rk(LONG4), 0.15))
+    assert ad.positions[BTC] == ("long", 0.06)
+
+
+def test_conflict_also_on_reoffer_menu_and_resync():
+    ad, c = hedge()
+    ad.hpos[(BTC, "short")] = 0.05
+    (m,) = run(c.on_event(Event("increase", "BTCUSDT", P(side="long", size=0.2), LONG4), 0.15, auto=False))
+    assert labels(m)[0] == "✅ Закрыть SHORT и войти в LONG"
+    (m,) = run(c.offer_entry(("BTCUSDT", "long"), LONG4, 0.15))
+    assert labels(m)[0] == "✅ Закрыть SHORT и войти в LONG"
+    msgs = run(c.resync(rk(LONG4), 0.15, "Сверка:"))
+    assert labels(msgs[-1])[0] == "✅ Закрыть SHORT и войти в LONG"
+    # «Ничего» — ничего не трогаем
+    run(c.answer_offer(offer_id(msgs[-1], False), False, rk(LONG4), 0.15, choice="no"))
+    assert ad.hpos == {(BTC, "short"): 0.05}
+
+
+def test_hedged_rast_copies_are_not_treated_as_own():
+    """Раст сам держит LONG и SHORT: наша копия шорта — не «твоя» позиция, конфликта нет."""
+    ad, c = hedge()
+    run(c.on_event(Event("open", "BTCUSDT", None, P(size=0.2)), 0.2))
+    msgs = run(c.on_event(Event("open", "BTCUSDT", None, LONG4), 0.15))
+    assert "открыл LONG" in msgs[0].text and not msgs[0].text.startswith("⚠️")

@@ -2,8 +2,12 @@
 
 - Позиция = пара (монета, сторона). У Раста и у Никиты hedge-режим: LONG и SHORT по BTC — две независимые
   позиции, и копии у них независимые.
-- Бот управляет только позициями, которые открыл сам (self.syms). Ручные позиции Никиты не трогает никогда
-  и не открывает копию поверх своей позиции в ту же сторону.
+- Бот управляет только позициями из self.syms: открытыми им самим или взятыми по кнопке «Вести как копию».
+  Остальные позиции Никиты сам не трогает и копию поверх своей позиции в ту же сторону не открывает.
+- Своя позиция Никиты по монете, в которую входит Раст:
+  · в ту же сторону — «Вести как копию»: размер остаётся, дальше сокращения/закрытие/доливки/TP-SL за Растом;
+  · во встречную — «Закрыть её и войти» (+ «Войти, её оставить» на hedge-счёте). Автомат в таких случаях
+    сам не входит — только кнопкой.
 - Режим подтверждений (auto=False, по умолчанию): на каждое действие Раста — сообщение «Делаем / Не делаем».
   «Делаем» приводит копию к его ТЕКУЩЕЙ позиции (а не к той, что была в момент сообщения).
 - Автомат (auto=True): монеты из auto_symbols и уже подтверждённые копии ведутся сразу; новые монеты — кнопкой.
@@ -44,9 +48,11 @@ class SymState:
 @dataclass
 class Offer:
     id: str
-    kind: str            # "sync" — привести копию к его позиции; "close" — закрыть копию (нет → оставить себе)
+    kind: str            # "sync" — привести копию к его позиции; "close" — закрыть копию (нет → оставить себе);
+    #                      "adopt" — вести свою позицию Никиты как копию
     key: tuple           # (symbol, side)
     created: float
+    flip: Optional[str] = None     # «да» сначала закрывает свою встречную позицию Никиты этой стороны
 
 
 def fmt(v: Optional[float]) -> str:
@@ -95,6 +101,20 @@ def desc(p: Pos) -> str:
     return f"{p.side.upper()} {p.symbol} {qty(p.symbol, p.size, p.avg)} по {fmt(p.avg)}{lev}{stops}"
 
 
+def other(side: str) -> str:
+    return "short" if side == "long" else "long"
+
+
+def own_desc(raw: str, o: dict, px: Optional[float]) -> str:
+    """«свой SHORT BTCUSDT 0.05 BTC (~$2 935), вход 59 100, твой PnL -$20»."""
+    out = f"свой {o['side'].upper()} {raw} {qty(raw, o['amount'], px)}"
+    if o.get("entry"):
+        out += f", вход {fmt(o['entry'])}"
+    if o.get("pnl") is not None:
+        out += f", твой PnL {pnl_str(o['pnl'])}"
+    return out
+
+
 def kname(key: tuple) -> str:
     return f"{key[1].upper()} {key[0]}"
 
@@ -141,31 +161,52 @@ class Copier:
                                               v.get("tp"), v.get("sl"))
 
     # ---------- предложения ----------
-    def _offer(self, kind: str, key: tuple, text: str, yes="Делаем", no="Не делаем") -> Msg:
+    def _offer(self, kind: str, key: tuple, text: str, yes="Делаем", no="Не делаем", keep: Optional[str] = None,
+               flip: Optional[str] = None) -> Msg:
         self._drop_offers(key)                 # по позиции живо только последнее предложение
-        o = Offer(uuid.uuid4().hex[:10], kind, key, time.time())
+        o = Offer(uuid.uuid4().hex[:10], kind, key, time.time(), flip)
         self.offers[o.id] = o
-        return self._m(text + f"\n(кнопки действуют 60 мин; «{yes}» — по его позиции на момент нажатия)",
-                       (("✅ " + yes, f"copy:offer:{o.id}:yes"), ("✖️ " + no, f"copy:offer:{o.id}:no")))
+        btns = [("✅ " + yes, f"copy:offer:{o.id}:yes")]
+        if keep:
+            btns.append((keep, f"copy:offer:{o.id}:keep"))
+        btns.append(("✖️ " + no, f"copy:offer:{o.id}:no"))
+        return self._m(text + "\n(кнопки действуют 60 мин; считаю по его позиции на момент нажатия)", btns)
 
     def _drop_offers(self, key: tuple) -> None:
         for oid in [o.id for o in self.offers.values() if o.key == key]:
             self.offers.pop(oid, None)
 
-    async def answer_offer(self, oid: str, yes: bool, rast: dict, k: Optional[float]) -> list:
-        """Ответ на кнопку. rast — текущие подтверждённые позиции Раста ((symbol, side) -> Pos)."""
+    async def answer_offer(self, oid: str, yes: bool, rast: dict, k: Optional[float],
+                           choice: Optional[str] = None) -> list:
+        """Ответ на кнопку. rast — текущие подтверждённые позиции Раста ((symbol, side) -> Pos).
+        choice: yes | keep (войти, свою встречную оставить) | no."""
+        choice = choice or ("yes" if yes else "no")
         o = self.offers.pop(oid, None)
         if o is None or time.time() - o.created > OFFER_TTL:
             return [self._m("Это предложение уже неактуально (есть более новое или прошло 60 мин).")]
-        if not yes:
+        if choice == "no":
             if o.kind == "close":
                 self.syms.pop(o.key, None)
                 return [self._m(f"Ок, {kname(o.key)} оставляю тебе, больше её не трогаю.")]
+            if o.kind == "adopt":
+                return [self._m(f"Ок, твой {kname(o.key)} не трогаю.")]
             return [self._m(f"Ок, по {kname(o.key)} ничего не делаю. Если Раст что-то поменяет в ней — "
                             f"снова предложу войти; войти раньше — /copy.")]
-        out = await self._sync(o.key, rast.get(o.key), k)
+        if o.kind == "adopt":
+            out = await self._adopt(o.key, rast.get(o.key))
+        else:
+            out = []
+            if o.flip and choice == "yes":
+                closed, ok = await self._close_own(o.key[0], o.flip)
+                out += closed
+                if not ok:
+                    return self._done(out)
+            out += await self._sync(o.key, rast.get(o.key), k)
+        return self._done(out)
+
+    def _done(self, msgs: list) -> list:
         return [self._m(("❌ " if "ОШИБКА" in m.text else "✅ Готово: ") + m.text[len(self._tag()):], m.buttons)
-                for m in out]
+                for m in msgs]
 
     def _step(self, raw: str) -> float:
         info = self.ex.market(raw)
@@ -196,21 +237,104 @@ class Copier:
         r = his_pnl(p, await self._live_px(p))
         return f" Результат у него ~{pnl_str(*r)}." if r else ""
 
-    def _entry_offer(self, key: tuple, his: Pos, k: Optional[float], head: str, px: Optional[float],
-                     yes="Войти", no="Не входить") -> Msg:
+    # ---------- вход в его позицию и свои позиции Никиты ----------
+    async def _own(self, raw: str) -> dict:
+        """Позиции Никиты по монете, которые бот не ведёт: сторона -> {side, amount, entry, pnl}."""
+        info = self.ex.market(raw)
+        if info is None:
+            return {}
+        try:
+            ps = await self.ex.open_positions(info.symbol)
+        except Exception as e:
+            log.warning("positions %s: %r", raw, e)
+            return {}
+        return {p["side"]: p for p in ps if p.get("side") in ("long", "short") and not self.managed((raw, p["side"]))}
+
+    def _conflict(self, key: tuple, his: Pos, k: Optional[float], body: str, own: dict, px: Optional[float],
+                  auto: bool) -> Optional[Msg]:
+        """У Никиты своя позиция по этой монете: в ту же сторону — «Вести как копию», во встречную — «Закрыть и войти»."""
+        raw, side = key
+        if side in own:
+            return self._offer("adopt", key,
+                               f"⚠️ {body}\nУ тебя уже открыт {own_desc(raw, own[side], px)} — в ту же сторону, "
+                               f"копию поверх не открываю.\nВести твой {side.upper()} как копию? Размер оставлю "
+                               f"{fmt(own[side]['amount'])}, дальше повторяю за Растом: сократит — сокращу в той же доле, "
+                               f"закроет — закрою, доливки (его × k) и TP/SL — тоже.",
+                               yes="Вести как копию", no="Не трогать")
+        opp = other(side)
+        if opp in own:
+            S, O = side.upper(), opp.upper()
+            note = "\nАвтомат сам не входит, пока у тебя открыта встречная позиция." if auto else ""
+            return self._offer("sync", key,
+                               f"⚠️ {body}\nА у тебя открыт {own_desc(raw, own[opp], px)}.{note}\n"
+                               f"Закрыть твой {O} по рынку и войти в {S}? {self._estimate(his, k, px)}.",
+                               yes=f"Закрыть {O} и войти в {S}", no="Ничего",
+                               keep=f"Войти, {O} оставить" if self.ex.hedged else None, flip=opp)
+        return None
+
+    async def _entry(self, key: tuple, his: Pos, k: Optional[float], head: str, px: Optional[float] = None,
+                     show_his: bool = True, ask: str = "Войти по рынку?", yes="Войти", no="Не входить") -> list:
+        """Предложение войти в его текущую позицию (с проверкой своих позиций Никиты по монете)."""
+        px = px or await self._live_px(his)
         pnl = self._pnl_line(his, px)
-        return self._offer("sync", key, f"{head}\nСейчас у него: {desc(his)}" + (f"\n{pnl}" if pnl else "")
-                           + f"\nВойти по рынку? {self._estimate(his, k, px)}.", yes=yes, no=no)
+        body = head + (f"\nСейчас у него: {desc(his)}" if show_his else "") + (f"\n{pnl}" if pnl else "")
+        c = self._conflict(key, his, k, body, await self._own(key[0]), px, False)
+        if c:
+            return [c]
+        st = self.syms.get(key)
+        if st is not None and st.detached:           # своей позиции на этой стороне уже нет — учёт отцепленной не нужен
+            self.syms.pop(key, None)
+        return [self._offer("sync", key, body + f"\n{ask} {self._estimate(his, k, px)}.", yes=yes, no=no)]
 
     async def offer_entry(self, key: tuple, his: Optional[Pos], k: Optional[float]) -> list:
         """Кнопка «Войти» из /copy: предложение войти в его текущую позицию."""
         if his is None:
             return [self._m(f"У Раста сейчас нет {kname(key)} — входить не во что.")]
-        st = self.syms.get(key)
-        if st is not None:
-            tail = " — она отцеплена, не трогаю" if st.detached else ""
-            return [self._m(f"{kname(key)}: копия уже есть ({fmt(st.expected)}){tail}.")]
-        return [self._entry_offer(key, his, k, f"{kname(key)} — у тебя копии нет.", await self._live_px(his))]
+        if self.managed(key):
+            return [self._m(f"{kname(key)}: копия уже есть ({fmt(self.syms[key].expected)}).")]
+        return await self._entry(key, his, k, f"{kname(key)} — у тебя копии нет.")
+
+    async def _adopt(self, key: tuple, his: Optional[Pos]) -> list:
+        """Своя позиция Никиты становится копией: размер как есть, дальше — за Растом."""
+        raw, side = key
+        info = self.ex.market(raw)
+        if his is None or info is None:
+            return [self._m(f"У Раста уже нет {kname(key)} — твою позицию не трогаю.")]
+        try:
+            s_, amt = await self.ex.position(info.symbol, side)
+            px = await self.ex.price(info.symbol)
+        except Exception as e:
+            log.exception("adopt %s", key)
+            return [self._m(f"ОШИБКА: не получил твою позицию {kname(key)}: {e}")]
+        if s_ != side or amt <= 0:
+            return [self._m(f"Твоего {kname(key)} уже нет — брать нечего.")]
+        self.syms[key] = SymState(side, amt, his_size=his.size)
+        msgs = [self._m(f"веду твой {kname(key)} {qty(raw, amt, px)} как копию его {fmt(his.size)}: "
+                        f"сократит — сокращу в той же доле, закроет — закрою, доливки и TP/SL — за ним.")]
+        if his.tpsl_known and (his.tp or his.sl):
+            stops = await self._tpsl(his)
+            if stops and "ОШИБКА" not in stops[0].text:
+                stops = [self._m(stops[0].text[len(self._tag()):] + ". Если по ней стояли твои TP/SL — сними их, "
+                                                                     "чтобы не было двойных.")]
+            msgs += stops
+        return msgs
+
+    async def _close_own(self, raw: str, side: str):
+        """Закрыть свою встречную позицию Никиты перед входом (только по его кнопке). → (сообщения, удалось ли)."""
+        info = self.ex.market(raw)
+        name = f"{side.upper()} {raw}"
+        try:
+            s_, amt = await self.ex.position(info.symbol, side)
+            if s_ != side or amt <= 0:
+                return [self._m(f"твоего {name} уже нет — просто вхожу.")], True
+            fill = await self.ex.market_order(info.symbol, "sell" if side == "long" else "buy", amt, True, side)
+        except Exception as e:
+            log.exception("close own %s %s", raw, side)
+            return [self._m(f"ОШИБКА закрытия твоего {name}: {e}. Не вхожу.")], False
+        st = self.syms.get((raw, side))
+        if st is not None and st.detached:
+            self.syms.pop((raw, side), None)
+        return [self._m(f"закрыл твой {side.upper()} {qty(raw, amt, fill)} по ~{fmt(fill)}")], True
 
     def _estimate(self, p: Pos, k: Optional[float], px: Optional[float] = None) -> str:
         if not k:
@@ -238,10 +362,13 @@ class Copier:
             what = (f"переставил {kname(key)}: TP {fmt(b.tp)} / SL {fmt(b.sl)}" if ev.kind == "tpsl"
                     else f"{'добавил' if ev.kind == 'increase' else 'сократил'} {kname(key)}: "
                          f"{qty(s, a.size, px)} → {qty(s, b.size, px)}")
-            if st is not None:                         # отцеплена: Никита ведёт её сам
-                pnl = self._pnl_line(b, px)
-                return [self._m(f"Раст {what} (твоя позиция отцеплена, не трогаю)" + (f"\n{pnl}" if pnl else ""))]
-            return [self._entry_offer(key, b, k, f"Раст {what}. У тебя копии нет.", px)]
+            tail = " У тебя копии нет." if st is None else " Твоя позиция отцеплена."
+            return await self._entry(key, b, k, f"Раст {what}.{tail}", px)
+        if ev.kind == "open" and not self.managed(key):
+            own = await self._own(s)
+            if own:
+                px = await self._live_px(b)
+                return [self._conflict(key, b, k, f"Раст открыл {desc(b)}.", own, px, auto)]
         if auto and (s in self.auto_symbols or self.managed(key)):
             self._drop_offers(key)
             if ev.kind == "tpsl":
@@ -289,12 +416,8 @@ class Copier:
             if self.managed(key):
                 lines.append(f"{kname(key)}: копия на месте ({fmt(self.syms[key].expected)}), продолжаю вести.")
             else:
-                px = await self._live_px(p)
-                pnl = self._pnl_line(p, px)
-                msgs.append(self._offer("sync", key, f"У Раста открыт {desc(p)}, у тебя копии нет."
-                                                     + (f"\n{pnl}" if pnl else "") + "\n"
-                                                     f"Открыть по рынку? {self._estimate(p, k, px)}.",
-                                        yes="Открыть", no="Не открывать"))
+                msgs += await self._entry(key, p, k, f"У Раста открыт {desc(p)}, у тебя копии нет.", show_his=False,
+                                          ask="Открыть по рынку?", yes="Открыть", no="Не открывать")
         for key in list(self.syms):
             if self.managed(key) and key not in rast:
                 st = self.syms[key]

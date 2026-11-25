@@ -164,3 +164,36 @@ def test_update_on_declined_position_comes_with_estimate(app):
     asyncio.run(app.on_event(Event("decrease", "BTCUSDT", P(), P(size=0.2))))
     last = app.tg.sent[-1]
     assert last.buttons and "у тебя будет SHORT" in last.text      # k посчитан и для сокращения
+
+
+
+def test_three_buttons_go_one_per_row():
+    from copytrade.main import keyboard_rows
+    two = (("✅ Делаем", "a"), ("✖️ Не делаем", "b"))
+    assert keyboard_rows(two) == [[{"text": "✅ Делаем", "callback_data": "a"},
+                                   {"text": "✖️ Не делаем", "callback_data": "b"}]]
+    three = two + (("Ничего", "c"),)
+    assert [len(r) for r in keyboard_rows(three)] == [1, 1, 1]
+
+
+def test_offer_command_passes_choice(app):
+    app.adapter.positions[BTC] = ("long", 0.05)        # одна позиция на монету (one-way)
+    confirm(app, P())
+    shared.add_command("enter", symbol="BTCUSDT", side="short")
+    asyncio.run(app.apply_settings())
+    last = app.tg.sent[-1]
+    assert last.buttons[0][0] == "✅ Закрыть LONG и войти в SHORT"
+    shared.add_command("offer", offer=last.buttons[0][1].split(":")[2], yes=True, choice="yes")
+    asyncio.run(app.apply_settings())
+    assert app.adapter.positions[BTC] == ("short", 0.0888)
+
+
+
+def test_turning_auto_on_sends_resync(app):
+    confirm(app, P())
+    app.adapter.positions[BTC] = ("short", 0.05)       # твоя позиция в ту же сторону
+    shared.save_settings(auto=True)
+    asyncio.run(app.apply_settings())
+    texts = app.tg.texts()
+    assert any("Автомат включён" in t for t in texts)
+    assert app.tg.sent[-1].buttons[0][0] == "✅ Вести как копию"

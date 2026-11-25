@@ -181,8 +181,8 @@ class CopyPanel:
         action = parts[1]
         note = ""
         if action == "offer":                       # кнопка под уведомлением копировщика
-            yes = parts[3] == "yes"
-            shared.add_command("offer", offer=parts[2], yes=yes)
+            choice = parts[3]                       # yes | keep (войти, свою встречную оставить) | no
+            shared.add_command("offer", offer=parts[2], yes=choice in ("yes", "keep"), choice=choice)
             await q.answer("Принято")
             try:
                 await q.edit_message_reply_markup(reply_markup=None)

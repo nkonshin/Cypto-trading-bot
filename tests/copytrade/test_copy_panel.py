@@ -172,3 +172,13 @@ def test_enter_button_becomes_command():
     u, ctx = cb_update(FATHER, "copy:enter:BTCUSDT:short")
     run(p.on_callback(u, ctx))
     assert len(shared.load_settings()["commands"]) == 1
+
+
+
+def test_offer_keep_choice_becomes_command():
+    p = panel()
+    q_upd, ctx = cb_update(ADMIN, "copy:offer:abc123:keep")
+    q_upd.callback_query.edit_message_reply_markup = AsyncMock()
+    run(p.on_callback(q_upd, ctx))
+    (cmd,) = shared.load_settings()["commands"]
+    assert (cmd["offer"], cmd["yes"], cmd["choice"]) == ("abc123", True, "keep")
