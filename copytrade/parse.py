@@ -31,25 +31,26 @@ def parse_number(text: str) -> Optional[float]:
     token = re.sub(r"[^\d.,]+.*$", "", token)
     if not token or not _NUM.fullmatch(token):
         return None
+    if re.match(r"^0\d", token):          # «04000» — потерянная точка, не 4000
+        return None
     return float(token.replace(",", ""))
 
 
 def parse_price(token: str, mark: Optional[float] = None) -> Optional[float]:
-    """Строго, как parse_number; если OCR перепутал разделители («59.600.0»), выбирает трактовку,
-    правдоподобную относительно текущей цены (±50%), и только если она единственная."""
+    """Строго, как parse_number. Если OCR испортил разделители («59.600.0», «59.6000»), берём только цифры
+    и ставим десятичную точку на 0/1/2 знака: соседние трактовки отличаются в 10 раз, поэтому в коридор
+    ±50% от рынка попадает максимум одна — её и берём."""
     strict = parse_number(token)
     if mark is None:
         return strict
-    cands = set()
-    if strict is not None:
-        cands.add(strict)
-    parts = re.split(r"[.,]", token)
-    if len(parts) > 1 and all(p.isdigit() for p in parts) and all(len(p) == 3 for p in parts[1:-1]):
-        cands.add(float("".join(parts[:-1]) + "." + parts[-1]))      # последний разделитель — дробный
-        if len(parts[-1]) == 3:
-            cands.add(float("".join(parts)))                          # все — разделители тысяч
-    ok = {c for c in cands if 0.5 * mark < c < 1.5 * mark}
-    return ok.pop() if len(ok) == 1 else None
+    band = lambda v: 0.5 * mark < v < 1.5 * mark
+    if strict is not None and band(strict):
+        return strict
+    digits = re.sub(r"\D", "", token)
+    if not digits:
+        return None
+    ok = [int(digits) / 10 ** d for d in (0, 1, 2) if band(int(digits) / 10 ** d)]
+    return ok[0] if len(ok) == 1 else None
 
 
 def parse_tpsl(text: str, mark: Optional[float] = None):
@@ -115,16 +116,17 @@ def find_cards(boxes) -> list:
 
 
 def parse_card(boxes, sym_box: Box, symbol: str):
-    """(Pos без стороны/TP-SL | None, причина)."""
+    """(Pos без стороны/TP-SL | None, причина). Объём, средняя и маржа обязаны сходиться в стандартное плечо —
+    это главная защита от ошибок OCR («0.4000» → «04000»)."""
     if not _SYMBOL.match(symbol):
         return None, f"монета не распознана: {symbol!r}"
     base = symbol[:-4]
     cy = sym_box.y
-    size_label = next((b for b in boxes if cy + 20 <= b.y <= cy + 40 and b.x < 60 and _UNIT.search(norm(b.text))), None)
+    size_label = next((b for b in boxes if cy + 20 <= b.y <= cy + 40 and b.x < 60), None)
     if size_label is None:
         return None, "нет подписи объёма"
-    unit = _UNIT.search(norm(size_label.text)).group(1).upper()
-    if unit != base:
+    unit = re.sub(r"[^A-Z0-9]", "", norm(size_label.text).upper().split("(")[-1])
+    if base not in unit and ("CONT" in unit or "USDT" in unit or "张" in size_label.text):
         return None, f"объём не в монетах ({unit})"
     row = _row_below(boxes, size_label)
     size = _num_in(row, 0, 60)
@@ -139,7 +141,15 @@ def parse_card(boxes, sym_box: Box, symbol: str):
         return None, "объём не прочитан"
     if avg is None:
         return None, "средняя цена не прочитана"
-    return Pos(symbol=symbol, side="", size=size, avg=avg, margin=margin, mark=mark), ""
+    if margin is None:
+        return None, "маржа не прочитана"
+    pos = Pos(symbol=symbol, side="", size=size, avg=avg, margin=margin, mark=mark)
+    if pos.leverage is None:
+        return None, f"объём/цена/маржа не сходятся ({size} × {avg} / {margin})"
+    if mark is not None and not (0.7 * avg < mark < 1.3 * avg):
+        mark = None
+        pos = Pos(symbol=symbol, side="", size=size, avg=avg, margin=margin, mark=None)
+    return pos, ""
 
 
 def parse_balance(boxes) -> Optional[float]:

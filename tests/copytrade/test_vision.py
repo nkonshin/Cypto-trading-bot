@@ -39,6 +39,26 @@ def test_panel_shifted_by_limit_order_form(reader):
     assert r.balance == 815.6503
 
 
+GOLDEN = {   # кадр → (сторона, объём, средняя) — что реально было на экране
+    "short_btc_a": ("short", 0.2, 59571.7),
+    "short_btc_b": ("short", 0.2, 59571.7),
+    "short_btc_04_limitform": ("short", 0.4, 59345.0),
+    "srv_short_04_zero_glitch": ("short", 0.4, 59345.0),    # на сервере OCR прочитал объём как «04000»
+    "srv_short_04_unit_glitch": ("short", 0.4, 59345.0),    # подпись «Poions 0BTC)»
+}
+
+
+@pytest.mark.parametrize("name", sorted(GOLDEN))
+def test_never_wrong_on_real_frames(reader, name):
+    """Главная гарантия: кадр можно не прочитать (бот подождёт следующий), но нельзя прочитать неверно."""
+    r = reader.read(cv2.imread(os.path.join(FX, name + ".jpg")))
+    if r.ok:
+        (p,) = r.positions
+        assert (p.side, p.size, p.avg) == GOLDEN[name]
+        if p.tpsl_known:
+            assert p.tp == 54321.0 and p.sl in (59750.0, 59600.0)
+
+
 def test_anchor_rejects_ad_frame():
     from copytrade.vision import locate
     ad = cv2.resize(cv2.imread(os.path.join(FX, "ad_break.jpg")), (1720, 720))

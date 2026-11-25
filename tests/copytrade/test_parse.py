@@ -13,6 +13,7 @@ def test_parse_number_strict():
     assert parse_number("245.5788 ®") == 245.5788
     assert parse_number("+97.1200(40.75%)") == 97.12
     assert parse_number("54,3210") is None          # потерянная точка — не угадываем
+    assert parse_number("04000") is None            # реальный сбой OCR: «0.4000» → «04000» с conf 0.99
     assert parse_number("5,9571.7") is None
     assert parse_number("abc") is None
     assert parse_number("") is None
@@ -34,7 +35,9 @@ def test_parse_tpsl_ocr_glitches_resolved_by_market_price():
     assert parse_tpsl(glitch) is None                         # без цены рынка не угадываем
     assert parse_tpsl(glitch, mark=58981.0) == (54321.0, 59600.0)
     assert parse_tpsl("54.321.0($2.009.6)/59.600.0($102)", mark=58981.0) == (54321.0, 59600.0)
-    assert parse_tpsl("5.432.10($2,009.6)/59,600.0($102)", mark=58981.0) is None   # 543210 / 5432.1 — не цена
+    assert parse_tpsl("54,321.0($2,009.6V59.6000($102))", mark=58934.1) == (54321.0, 59600.0)  # сбой на сервере
+    assert parse_tpsl("5.432.10($2,009.6)/59,600.0($102)", mark=58981.0) == (54321.0, 59600.0)
+    assert parse_tpsl("9($2,009.6)/59,600.0($102)", mark=58981.0) is None
 
 
 def test_valid_tpsl_respects_side_and_mark():
@@ -70,6 +73,31 @@ def test_parse_card_ok():
     assert p.leverage == 50
 
 
+def test_parse_card_garbled_unit_label_still_ok():
+    for label in ("Poions 0BTC)", "Posiions (BTC3", "Posions (BTC)"):
+        boxes = [b if "BTC)" not in b.text else b._replace(text=label, conf=0.72) for b in CARD]
+        (sym_box, sym), = find_cards(boxes)
+        p, why = parse_card(boxes, sym_box, sym)
+        assert why == "" and p.size == 0.2, label
+
+
+def test_parse_card_rejects_size_inconsistent_with_margin():
+    boxes = [b if b.text != "0.2000" else b._replace(text="04000") for b in CARD]
+    (sym_box, sym), = find_cards(boxes)
+    assert parse_card(boxes, sym_box, sym)[0] is None
+    boxes = [b if b.text != "0.2000" else b._replace(text="2.0000") for b in CARD]   # 10× — плечо 485x
+    (sym_box, sym), = find_cards(boxes)
+    p, why = parse_card(boxes, sym_box, sym)
+    assert p is None and "не сходятся" in why
+
+
+def test_parse_card_requires_margin():
+    boxes = [b for b in CARD if b.text != "245.5788"]
+    (sym_box, sym), = find_cards(boxes)
+    p, why = parse_card(boxes, sym_box, sym)
+    assert p is None and "маржа" in why
+
+
 def test_parse_card_rejects_low_confidence_size():
     boxes = [b if b.text != "0.2000" else b._replace(conf=0.7) for b in CARD]
     (sym_box, sym), = find_cards(boxes)
@@ -78,7 +106,7 @@ def test_parse_card_rejects_low_confidence_size():
 
 
 def test_parse_card_rejects_contract_units_and_bad_symbol():
-    boxes = [b if "BTC)" not in b.text else b._replace(text="Positions (Cont)") for b in CARD]
+    boxes = [b if "BTC)" not in b.text else b._replace(text="Positions (Cont)") for b in CARD]   # контракты
     (sym_box, sym), = find_cards(boxes)
     assert parse_card(boxes, sym_box, sym)[0] is None
     boxes = [b if "Perpetual" not in b.text else b._replace(text="BTCUSOTPerpetual>") for b in CARD]
