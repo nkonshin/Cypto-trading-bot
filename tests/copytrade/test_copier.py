@@ -136,7 +136,7 @@ def test_uncopied_position_update_offers_entry_and_close_reports_his_result():
     msgs = run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.3, margin=368.37)), 0.2))
     (m,) = msgs
     assert BTC not in ad.positions and [b[0] for b in m.buttons] == ["✅ Войти", "✖️ Не входить"]
-    assert "PnL Раста сейчас: +$172 (+46.6%) при цене 59 000" in m.text
+    assert "PnL Раста сейчас: +$172 (+48.0%) при цене 59 000" in m.text
     msgs = run(c.on_event(Event("close", "BTCUSDT", P(size=0.3, margin=368.37), None), 0.2))
     assert "не копировали" in msgs[0].text and "+$172" in msgs[0].text and not msgs[0].buttons
 
@@ -334,7 +334,7 @@ def test_offer_entry_from_menu():
     ad, c = make()
     (m,) = run(c.offer_entry(("BTCUSDT", "short"), P(), 0.2))
     assert [b[0] for b in m.buttons] == ["✅ Войти", "✖️ Не входить"]
-    assert "PnL Раста сейчас: +$114 (+46.6%)" in m.text and BTC not in ad.positions
+    assert "PnL Раста сейчас: +$114 (+48.0%)" in m.text and BTC not in ad.positions
     run(c.answer_offer(offer_id(m), True, rk(P()), 0.2))
     assert ad.positions[BTC] == ("short", 0.04)
     (m,) = run(c.offer_entry(("BTCUSDT", "short"), P(), 0.2))
@@ -345,8 +345,8 @@ def test_offer_entry_from_menu():
 
 def test_his_pnl_long_short_and_loss():
     from copytrade.copier import his_pnl, pnl_str
-    assert pnl_str(*his_pnl(P(), 59000.0)) == "+$114 (+46.6%)"
-    assert pnl_str(*his_pnl(P(side="long"), 59000.0)) == "-$114 (-46.6%)"
+    assert pnl_str(*his_pnl(P(), 59000.0)) == "+$114 (+48.0%)"
+    assert pnl_str(*his_pnl(P(side="long"), 59000.0)) == "-$114 (-48.0%)"
     assert pnl_str(*his_pnl(P(margin=None), 59571.7 - 25)) == "+$5.00"
     assert his_pnl(P(), None) is None
 
@@ -355,6 +355,15 @@ def test_offers_on_copied_position_show_his_pnl():
     ad, c = make()
     run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
     (m,) = run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.4, margin=491.16)), 0.2, auto=False))
-    assert "PnL Раста сейчас: +$229 (+46.6%)" in m.text
+    assert "PnL Раста сейчас: +$229 (+48.0%)" in m.text
     (m,) = run(c.on_event(Event("close", "BTCUSDT", P(size=0.4, margin=491.16), None), None, auto=False))
     assert "+$229" in m.text
+
+
+
+def test_pnl_percent_is_from_initial_margin_like_his_panel():
+    """Кадр 25.11 15:26: LONG 0.4 по 57 903.3, 50x, Margin 662.6963 (доливал), mark 58 114.7 → +84.56 (18.25%)."""
+    from copytrade.copier import his_pnl
+    p = Pos("BTCUSDT", "long", 0.4, 57903.3, 662.6963, 58114.7, lev=50)
+    v, pct = his_pnl(p, 58114.7)
+    assert round(v, 2) == 84.56 and round(pct, 2) == 18.25

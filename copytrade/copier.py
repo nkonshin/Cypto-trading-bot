@@ -69,11 +69,14 @@ def qty(raw: str, amount: float, price: Optional[float]) -> str:
 
 
 def his_pnl(p: Pos, px: Optional[float]):
-    """Нереализованный PnL Раста по цене px: ($, % от маржи) — как в его панели, без комиссий."""
+    """Нереализованный PnL Раста по цене px: ($, %) — как в его панели OKX, без комиссий.
+    OKX считает % от начальной маржи (номинал / плечо), а не от поля Margin: Раст доливает маржу в позицию
+    (25.11: Margin 662.70 при начальной 463.23 → панель показывала 18.25%, а не 12.76%)."""
     if not (px and p.avg and p.size):
         return None
     v = (px - p.avg) * p.size * (1 if p.side == "long" else -1)
-    return v, (v / p.margin * 100 if p.margin else None)
+    base = p.size * p.avg / p.leverage if p.leverage else p.margin
+    return v, (v / base * 100 if base else None)
 
 
 def pnl_str(v: float, pct: Optional[float] = None) -> str:
