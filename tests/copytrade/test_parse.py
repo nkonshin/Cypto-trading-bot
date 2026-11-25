@@ -39,6 +39,7 @@ def test_parse_tpsl_ocr_glitches_resolved_by_market_price():
     assert parse_tpsl("5.432.10($2,009.6)/59,600.0($102)", mark=58981.0) == (54321.0, 59600.0)
     assert parse_tpsl("9($2,009.6)/59,600.0($102)", mark=58981.0) is None
     assert parse_tpsl("--/58,250.0(583.86）>", mark=58712.9) == (None, 58250.0)    # «$» прочитан как «5»
+    assert parse_tpsl("-/58,250.0(583.86)>", mark=58712.9) == (None, 58250.0)      # «--» прочитан как «-»
 
 
 def test_valid_tpsl_respects_side_and_mark():

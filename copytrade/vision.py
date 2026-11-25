@@ -77,7 +77,10 @@ class PanelReader:
     def __init__(self, ocr=None):
         if ocr is None:
             from rapidocr_onnxruntime import RapidOCR
-            ocr = RapidOCR()
+            # по умолчанию детектор растягивает картинку до короткой стороны 736 px — одно чтение на сервере
+            # шло ~20 с. 320 даёт ту же точность на эталонных кадрах (0 ошибок) в 2.5 раза быстрее.
+            ocr = RapidOCR(det_limit_type="min", det_limit_side_len=320, intra_op_num_threads=1,
+                           inter_op_num_threads=1)
         self.ocr = ocr
         self._form = (None, None)
         self._form_at = 0.0
@@ -91,7 +94,7 @@ class PanelReader:
 
     def ocr_boxes(self, frame: np.ndarray, rect, scale: int) -> list:
         x, y, w, h = (int(v) for v in rect)
-        res, _ = self.ocr(_prep(frame[max(0, y):y + h, max(0, x):x + w], scale))
+        res, _ = self.ocr(_prep(frame[max(0, y):y + h, max(0, x):x + w], scale), use_cls=False)
         out = []
         for pts, text, conf in res or []:
             xs = [p[0] for p in pts]
@@ -100,12 +103,23 @@ class PanelReader:
                            (max(xs) - min(xs)) / scale, (max(ys) - min(ys)) / scale, text, float(conf)))
         return out
 
+    def ocr_line(self, frame, rect, scale):
+        """Одна строка текста без детектора (в ~50 раз быстрее): (текст, уверенность)."""
+        x, y, w, h = (int(v) for v in rect)
+        c = cv2.resize(frame[max(0, y):y + h, max(0, x):x + w], None, fx=scale, fy=scale,
+                       interpolation=cv2.INTER_CUBIC)
+        g = cv2.normalize(c.max(axis=2), None, 0, 255, cv2.NORM_MINMAX)
+        res, _ = self.ocr(cv2.cvtColor(255 - g, cv2.COLOR_GRAY2BGR), use_det=False, use_cls=False, use_rec=True)
+        if not res:
+            return "", 0.0
+        return str(res[0][0]), float(res[0][1])
+
     def _size_votes(self, frame, rect, panel_size):
-        """Дополнительные чтения объёма (×4, ×3, ×5) — до первых двух совпадений вместе с панелью."""
+        """Дополнительные чтения объёма (×3, ×2, ×4, только распознаватель) — до двух совпадений с панелью."""
         votes = []
-        for sc in (4, 3, 5):
-            sb = self.ocr_boxes(frame, rect, sc)
-            votes.append(next((parse_number(b.text) for b in sb if b.conf >= 0.85 and parse_number(b.text)), None))
+        for sc in (3, 2, 4):
+            text, conf = self.ocr_line(frame, rect, sc)
+            votes.append(parse_number(text) if conf >= 0.8 else None)
             if vote([panel_size] + votes) is not None:
                 break
         return votes
