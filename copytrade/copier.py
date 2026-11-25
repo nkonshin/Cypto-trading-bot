@@ -34,9 +34,10 @@ def fmt(v: Optional[float]) -> str:
 
 
 class Copier:
-    def __init__(self, adapter, default_leverage: int = 10, margin_frac: float = 0.95):
+    def __init__(self, adapter, default_leverage: int = 10, margin_frac: float = 0.95, max_leverage: int = 125):
         self.ex = adapter
         self.default_leverage = default_leverage
+        self.max_leverage = max_leverage
         self.margin_frac = margin_frac
         self.syms: dict = {}           # raw symbol -> SymState
         self.ignored: set = set()
@@ -99,7 +100,7 @@ class Copier:
         his = f"Раст: {p.side.upper()} {p.symbol} {fmt(p.size)} по {fmt(p.avg)}"
         if info is None:
             return [f"{self._tag()}{his}\n→ монеты нет на BingX, пропускаю."]
-        lev = min(p.leverage or self.default_leverage, info.max_leverage)
+        lev = min(p.leverage or self.default_leverage, info.max_leverage, self.max_leverage)
         amount = floor_step(p.size * k, info.step)
         if amount < info.min_amount:
             return [f"{self._tag()}{his}\n→ при k={k} объём {fmt(p.size * k)} меньше минимального лота "
@@ -174,7 +175,7 @@ class Copier:
                     return [f"{self._tag()}{his}\n→ добавка {fmt((b.size - a.size) * k)} меньше лота, пропускаю."]
                 px = await self.ex.price(info.symbol)
                 _, free = await self.ex.balance()
-                lev = min(b.leverage or a.leverage or self.default_leverage, info.max_leverage)
+                lev = min(b.leverage or a.leverage or self.default_leverage, info.max_leverage, self.max_leverage)
                 add, cut = fit_margin(add, px, lev, free, info.step, self.margin_frac)
                 if add < info.min_amount:
                     return [f"{self._tag()}{his}\n→ не хватает маржи на добавку, пропускаю."]

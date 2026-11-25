@@ -7,11 +7,32 @@ services:
     network_mode: host
     volumes:
       - bot-data:/app/data
+      - copier-data:/app/copier_data
     # По умолчанию запускается в полном режиме (бот + Telegram).
     # Для других режимов раскомментируй нужную строку:
     # command: ["--no-telegram"]
     # command: ["--backtest", "--strategy", "multi_indicator", "--symbol", "BTC/USDT"]
     # command: ["--compare"]
 
+  # Копирование сделок со стрима Раста на BingX (docs/copytrade-design.md).
+  # Управление — /copy в Telegram-боте (только админ). Ключи: BINGX_API_KEY / BINGX_API_SECRET в .env.
+  copier:
+    build:
+      context: .
+      dockerfile: copytrade/Dockerfile
+    container_name: crypto-copier
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - copier-data:/app/copier_data
+    mem_limit: 900m
+    cpus: 0.8
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   bot-data:
+  copier-data:

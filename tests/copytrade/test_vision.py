@@ -29,6 +29,23 @@ def test_real_short_btc(reader, name, mark, balance):
     assert p.tpsl_known and (p.tp, p.sl) == (54321.0, 59750.0)
 
 
+def test_panel_shifted_by_limit_order_form(reader):
+    """Раст переключил форму на лимитный ордер — панель уехала на 9 px вниз, SL перенесён на 59 600."""
+    r = reader.read(cv2.imread(os.path.join(FX, "short_btc_04_limitform.jpg")), with_balance=True)
+    assert r.ok, r.reason
+    (p,) = r.positions
+    assert (p.symbol, p.side, p.size, p.avg, p.leverage) == ("BTCUSDT", "short", 0.4, 59345.0, 50)
+    assert p.tpsl_known and (p.tp, p.sl) == (54321.0, 59600.0)
+    assert r.balance == 815.6503
+
+
+def test_anchor_rejects_ad_frame():
+    from copytrade.vision import locate
+    ad = cv2.resize(cv2.imread(os.path.join(FX, "ad_break.jpg")), (1720, 720))
+    assert locate(ad) is None
+    assert PanelReader.read(PanelReader(ocr=lambda img: ([], 0)), ad).reason == "панель позиций не видна"
+
+
 def test_side_color_on_real_frame():
     f = cv2.imread(os.path.join(FX, "short_btc_a.jpg"))
     assert side_by_color(f, 281, 492) == "short"

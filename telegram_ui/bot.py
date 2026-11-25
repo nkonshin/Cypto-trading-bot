@@ -2588,6 +2588,12 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("help", self.cmd_help))
         self._app.add_handler(CommandHandler("info", self.cmd_info))
 
+        # Копирование сделок Раста — только админ; свой CallbackQueryHandler с pattern ^copy:
+        # регистрируется раньше общего, чтобы перехватывать свои кнопки
+        from telegram_ui.copy_panel import CopyPanel
+        for handler in CopyPanel(self._is_admin).handlers():
+            self._app.add_handler(handler)
+
         # Callback для inline кнопок
         self._app.add_handler(CallbackQueryHandler(self.handle_callback))
 

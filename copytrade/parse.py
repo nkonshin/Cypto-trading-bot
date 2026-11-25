@@ -16,9 +16,8 @@ _NUM = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
 _TAB = re.compile(r"(?i)p\w{4,9}\s*\(\s*(\d{1,2})\s*\)")
 _SYMBOL = re.compile(r"^[A-Z0-9]{2,15}USDT$")
 _UNIT = re.compile(r"(?i)ion\w*\s*\(\s*([A-Za-z0-9]{2,10})\s*\)")
-# каждая цена обязательно со своей суммой в скобках: «54,321.0($1,050.14)» или «--»
-_TPSL_PART = r"(--|\d[\d,]*\.\d+(?=\(\$[^)]*\)))(?:\(\$[^)]*\))?"
-_TPSL = re.compile(r"^[^\d-]*" + _TPSL_PART + r"/?" + _TPSL_PART)
+# цена TP/SL — число прямо перед своей суммой «($…)», либо «--», если не задано
+_TPSL_TOKEN = re.compile(r"(\d[\d.,]*)(?=\(\$)|(?<![\d.,$])--(?![\d])")
 
 
 def norm(text: str) -> str:
@@ -35,18 +34,36 @@ def parse_number(text: str) -> Optional[float]:
     return float(token.replace(",", ""))
 
 
-def parse_tpsl(text: str):
+def parse_price(token: str, mark: Optional[float] = None) -> Optional[float]:
+    """Строго, как parse_number; если OCR перепутал разделители («59.600.0»), выбирает трактовку,
+    правдоподобную относительно текущей цены (±50%), и только если она единственная."""
+    strict = parse_number(token)
+    if mark is None:
+        return strict
+    cands = set()
+    if strict is not None:
+        cands.add(strict)
+    parts = re.split(r"[.,]", token)
+    if len(parts) > 1 and all(p.isdigit() for p in parts) and all(len(p) == 3 for p in parts[1:-1]):
+        cands.add(float("".join(parts[:-1]) + "." + parts[-1]))      # последний разделитель — дробный
+        if len(parts[-1]) == 3:
+            cands.add(float("".join(parts)))                          # все — разделители тысяч
+    ok = {c for c in cands if 0.5 * mark < c < 1.5 * mark}
+    return ok.pop() if len(ok) == 1 else None
+
+
+def parse_tpsl(text: str, mark: Optional[float] = None):
     """«54,321.0($1,050.14)/59,750.0($35.66)» → (54321.0, 59750.0); «--/--» → (None, None); мусор → None."""
     t = norm(text).replace(" ", "")
-    m = _TPSL.match(t)
-    if not m:
+    tokens = [m.group(1) or "--" for m in _TPSL_TOKEN.finditer(t)]
+    if len(tokens) != 2:
         return None
     out = []
-    for part in m.groups():
-        if part == "--":
+    for tok in tokens:
+        if tok == "--":
             out.append(None)
             continue
-        v = parse_number(part)
+        v = parse_price(tok, mark)
         if v is None:
             return None
         out.append(v)

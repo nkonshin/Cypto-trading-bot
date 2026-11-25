@@ -28,6 +28,15 @@ def test_parse_tpsl():
     assert parse_tpsl("All Positions") is None
 
 
+def test_parse_tpsl_ocr_glitches_resolved_by_market_price():
+    # реальный сбой OCR: «)/» → «V», запятая тысяч → точка
+    glitch = "54,321.0($2,009.6V59.600.0($102)"
+    assert parse_tpsl(glitch) is None                         # без цены рынка не угадываем
+    assert parse_tpsl(glitch, mark=58981.0) == (54321.0, 59600.0)
+    assert parse_tpsl("54.321.0($2.009.6)/59.600.0($102)", mark=58981.0) == (54321.0, 59600.0)
+    assert parse_tpsl("5.432.10($2,009.6)/59,600.0($102)", mark=58981.0) is None   # 543210 / 5432.1 — не цена
+
+
 def test_valid_tpsl_respects_side_and_mark():
     assert valid_tpsl("short", 59086.1, 54321.0, 59750.0)
     assert not valid_tpsl("short", 59086.1, 59750.0, 54321.0)     # перепутаны местами

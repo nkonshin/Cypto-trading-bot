@@ -1,6 +1,7 @@
 """Распознавание кадра стрима: вырезки → RapidOCR → разбор → Reading. Плюс детектор изменений панели."""
 from __future__ import annotations
 
+import os
 import time
 from typing import Optional
 
@@ -11,11 +12,33 @@ from copytrade.model import Box, Pos, Reading
 from copytrade.parse import (find_cards, parse_balance, parse_card, parse_tab, parse_tpsl, valid_tpsl)
 
 REF_W, REF_H = 1720, 720
-PANEL = (275, 428, 350, 140)      # вкладки + первая карточка до ряда средней цены
-TPSL = (440, 566, 185, 18)        # строка «All Positions a ($)/b ($)» первой карточки
-BALANCE = (275, 630, 200, 40)     # «Assets Value»
+# Координаты в эталонной раскладке (кадр short_btc_a). Панель «плавает» по вертикали, когда Раст меняет
+# форму ордера (лимитный ордер добавляет строки), поэтому всё отсчитывается от якоря — надписи вкладок.
+ANCHOR_AT = (395, 431)                       # где якорь стоит в эталоне
+ANCHOR_SEARCH = (250, 340, 410, 260)         # где его искать
+ANCHOR_MIN_SCORE = 0.8
+PANEL = (275, 428, 350, 140)      # вкладки + первая карточка до ряда средней цены (эталон)
+TPSL_DX, TPSL_DY, TPSL_W, TPSL_H = 165, 84, 185, 18   # строка TP/SL от левого края панели / от строки монеты
+BALANCE = (275, 622, 200, 50)     # «Assets Value» (не двигается)
 PANEL_SCALE, TPSL_SCALE, BAL_SCALE = 2, 4, 3
 PAD = 16
+_TEMPLATE = cv2.imread(os.path.join(os.path.dirname(__file__), "assets", "tabs_anchor.png"), cv2.IMREAD_GRAYSCALE)
+
+
+def to_ref(frame: np.ndarray) -> np.ndarray:
+    h, w = frame.shape[:2]
+    return frame if (w, h) == (REF_W, REF_H) else cv2.resize(frame, (REF_W, REF_H), interpolation=cv2.INTER_AREA)
+
+
+def locate(frame: np.ndarray):
+    """Сдвиг панели относительно эталона: (dx, dy) или None, если панели не видно."""
+    x, y, w, h = ANCHOR_SEARCH
+    g = cv2.cvtColor(frame[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY)
+    res = cv2.matchTemplate(g, _TEMPLATE, cv2.TM_CCOEFF_NORMED)
+    _, score, _, loc = cv2.minMaxLoc(res)
+    if score < ANCHOR_MIN_SCORE:
+        return None
+    return loc[0] + x - ANCHOR_AT[0], loc[1] + y - ANCHOR_AT[1]
 
 
 def _prep(crop: np.ndarray, scale: int) -> np.ndarray:
@@ -47,15 +70,9 @@ class PanelReader:
             ocr = RapidOCR()
         self.ocr = ocr
 
-    def _rect(self, frame, rect):
-        h, w = frame.shape[:2]
-        sx, sy = w / REF_W, h / REF_H
-        x, y, rw, rh = rect
-        return int(x * sx), int(y * sy), max(1, int(rw * sx)), max(1, int(rh * sy))
-
     def ocr_boxes(self, frame: np.ndarray, rect, scale: int) -> list:
-        x, y, w, h = self._rect(frame, rect)
-        res, _ = self.ocr(_prep(frame[y:y + h, x:x + w], scale))
+        x, y, w, h = (int(v) for v in rect)
+        res, _ = self.ocr(_prep(frame[max(0, y):y + h, max(0, x):x + w], scale))
         out = []
         for pts, text, conf in res or []:
             xs = [p[0] for p in pts]
@@ -66,14 +83,19 @@ class PanelReader:
 
     def read(self, frame: np.ndarray, with_balance: bool = False) -> Reading:
         now = time.time()
+        frame = to_ref(frame)
         balance = None
         if with_balance:
             balance = parse_balance(self.ocr_boxes(frame, BALANCE, BAL_SCALE))
-        boxes = self.ocr_boxes(frame, PANEL, PANEL_SCALE)
+        off = locate(frame)
+        if off is None:
+            return Reading(False, (), None, balance, "панель позиций не видна", now)
+        px0, py0 = PANEL[0] + off[0], PANEL[1] + off[1]
+        boxes = self.ocr_boxes(frame, (px0, py0, PANEL[2], PANEL[3]), PANEL_SCALE)
         self.last_boxes = boxes
         n = parse_tab(boxes)
         if n is None:
-            return Reading(False, (), None, balance, "панель позиций не видна", now)
+            return Reading(False, (), None, balance, "вкладка позиций не прочитана", now)
         cards = find_cards(boxes)
         if n == 0:
             if cards:
@@ -87,14 +109,13 @@ class PanelReader:
         pos, why = parse_card(boxes, sym_box, symbol)
         if pos is None:
             return Reading(False, (), n, balance, why, now)
-        px, py, _, _ = self._rect(frame, (PANEL[0] + sym_box.x - 2, PANEL[1] + sym_box.y + 11, 40, 11))
-        side = side_by_color(frame, px, py)
+        side = side_by_color(frame, int(px0 + sym_box.x - 2), int(py0 + sym_box.y + 11))
         if side is None:
             return Reading(False, (), n, balance, "сторона не определена", now)
         tp = sl = None
         known = False
-        tb = self.ocr_boxes(frame, TPSL, TPSL_SCALE)
-        parsed = parse_tpsl(" ".join(b.text for b in sorted(tb, key=lambda b: b.x)))
+        tb = self.ocr_boxes(frame, (px0 + TPSL_DX, py0 + sym_box.y + TPSL_DY, TPSL_W, TPSL_H), TPSL_SCALE)
+        parsed = parse_tpsl(" ".join(b.text for b in sorted(tb, key=lambda b: b.x)), pos.mark)
         if parsed and all(b.conf >= 0.8 for b in tb) and valid_tpsl(side, pos.mark, *parsed):
             tp, sl = parsed
             known = True
@@ -113,10 +134,10 @@ class ChangeDetector:
 
     @staticmethod
     def _sig(frame: np.ndarray) -> np.ndarray:
-        h, w = frame.shape[:2]
-        sx, sy = w / REF_W, h / REF_H
-        x, y, cw, ch = PANEL[0], PANEL[1], PANEL[2], 190
-        g = cv2.cvtColor(frame[int(y * sy):int((y + ch) * sy), int(x * sx):int((x + cw) * sx)], cv2.COLOR_BGR2GRAY)
+        frame = to_ref(frame)
+        dx, dy = locate(frame) or (0, 0)
+        x, y, cw, ch = PANEL[0] + dx, max(0, PANEL[1] + dy), PANEL[2], 190
+        g = cv2.cvtColor(frame[y:y + ch, x:x + cw], cv2.COLOR_BGR2GRAY)
         g = cv2.resize(g, (cw, ch)).astype(np.int16)
         g[45:80, 240:] = 0     # PnL
         g[75:140, 110:] = 0    # маржа/ratio/mark/liq
