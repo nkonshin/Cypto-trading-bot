@@ -1,13 +1,17 @@
 """Управление копированием сделок Раста — только для админа (main_user_id).
 
 Бот пишет настройки в общий том (copier-data/settings.json), копировщик пишет статус (status.json).
-Команды: /copy, /copy_mult 1.2, /copy_mode notify|demo|live|off.
+Команды: /copy, /copy_status, /copy_shot, /copy_mult 1.2, /copy_mode notify|demo|live|off.
 Кнопки уведомлений копировщика (copy:offer:<id>:yes|no) тоже приходят сюда.
 «➕ Войти …» (copy:enter:<монета>:<сторона>) — для позиций Раста без копии: копировщик пришлёт расчёт с кнопками.
+«📸 Кадр» — копировщик пишет последний кадр стрима в copier_data/snapshot.jpg, бот присылает фото.
+Время везде пермское (UTC+5): серверы живут в UTC.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import html
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -32,13 +36,13 @@ def pause_text(pu) -> str:
     if pu == -1:
         return "на паузе без срока"
     if pu and pu > time.time():
-        return "на паузе до " + time.strftime("%H:%M", time.localtime(pu))
+        return "на паузе до " + shared.perm_time(pu)
     return ""
 
 
 def until_2300(now: float = None) -> float:
     now = now or time.time()
-    d = dt.datetime.fromtimestamp(now).replace(hour=23, minute=0, second=0, microsecond=0)
+    d = dt.datetime.fromtimestamp(now, shared.PERM).replace(hour=23, minute=0, second=0, microsecond=0)
     if d.timestamp() <= now:
         d += dt.timedelta(days=1)
     return d.timestamp()
@@ -87,8 +91,114 @@ def status_text() -> str:
     if ev:
         lines.append("\nПоследнее:")
         for e in ev[-4:]:
-            lines.append(time.strftime("%H:%M ", time.localtime(e["t"])) + e["text"].split("\n")[0][:110])
+            lines.append(shared.perm_time(e["t"]) + " " + e["text"].split("\n")[0][:110])
     return "\n".join(lines)
+
+
+SIDE_ICON = {"long": "🟢", "short": "🔴"}
+
+
+def _e(v) -> str:
+    return html.escape(str(v), quote=False)
+
+
+def _usd(amount, px) -> str:
+    return f"~${amount * px:,.0f}".replace(",", " ") if amount and px else ""
+
+
+def _when(ts, now, fmt="%H:%M:%S") -> str:
+    return f"{shared.perm_time(ts, fmt)} ({shared.ago(ts, now)})" if ts else "ещё не было"
+
+
+def _mine(p: dict, px) -> str:
+    """«0.0604 BTC (~$3 550), вход 57 931.8, PnL +$44 (+76.0%)» — твоя позиция или копия."""
+    u = _usd(p.get("amount"), px or p.get("entry"))
+    parts = [f"{_f(p.get('amount'))} {p['symbol'][:-4]}" + (f" ({u})" if u else "")]
+    if p.get("entry"):
+        parts.append(f"вход {_f(p['entry'], 1)}")
+    if p.get("pnl") is not None:
+        parts.append(f"PnL {pnl_str(p['pnl'], p.get('pnl_pct'))}")
+    return ", ".join(parts)
+
+
+def status_brief(now: float = None) -> str:
+    """/copy_status: живо ли всё (кадр, чтение панели, балансы) и позиции Раста с твоими рядом. HTML."""
+    now = now or time.time()
+    s, st = shared.load_settings(), shared.read_status()
+    pz = pause_text(s.get("paused_until"))
+    auto = ("авто ВКЛ (" + ", ".join(s["auto_symbols"]) + " сам)" if s.get("auto")
+            else "авто выкл — всё через кнопки")
+    lines = [f"📊 <b>Копирование Раста</b> · {shared.perm_time(now)} Пермь", "",
+             f"Режим: <b>{_e(MODE_NAMES.get(s['mode'], s['mode']))}</b> · {auto}"]
+    if pz:
+        lines.append(f"⏸ {pz}")
+    if not st or now - st.get("updated", 0) > 30:
+        lines.append("\n⚠️ <b>Копировщик не отвечает</b>"
+                     + (f": последний статус {_when(st['updated'], now, '%H:%M')}" if st.get("updated") else "")
+                     + ". Ничего не копируется.")
+        return "\n".join(lines)
+    if st.get("mode") != s["mode"]:
+        lines.append(f"(копировщик ещё в режиме {_e(st.get('mode'))}, переключается…)")
+    eye = "панель видна ✅" if st.get("seen_ok") else f"⚠️ панель не видна: {_e(st.get('reason') or '—')}"
+    lines += [f"Стрим: {'🟢 в эфире' if st.get('online') else '⚫️ офлайн'} · {eye}",
+              f"Последний кадр: {_when(st.get('last_frame'), now)}",
+              f"Последнее чтение панели: {_when(st.get('last_ocr'), now)}"]
+    if not st.get("seen_ok") and st.get("last_ok"):
+        lines.append(f"Панель видел последний раз: {_when(st['last_ok'], now)}")
+    lines.append(f"Баланс Раста: {_f(st.get('his_balance'), 2)} USDT"
+                 + (f", прочитан {_when(st['last_balance'], now, '%H:%M')}" if st.get("last_balance") else ""))
+    paper = " (условный: режим без сделок)" if st.get("mode") == "notify" else ""
+    lines.append(f"Твой баланс: {_f(st.get('our_equity'), 2)} USDT{paper}"
+                 + (f" · k {_f(st['k'], 3)}" if st.get("k") else ""))
+
+    his = st.get("his_positions") or []
+    ours = {(p["symbol"], p.get("side")): p for p in st.get("our_positions") or []}
+    own = {(p["symbol"], p.get("side")): p for p in st.get("own_positions") or []}
+    for p in his:
+        key, px, coin = (p["symbol"], p["side"]), p.get("price"), p["symbol"][:-4]
+        lev = f" · {p['leverage']}x" if p.get("leverage") else ""
+        lines += ["", f"{SIDE_ICON.get(p['side'], '')} <b>{p['side'].upper()} {p['symbol']}</b>{lev}"]
+        u = _usd(p["size"], p.get("avg"))
+        lines.append(f"Раст: {_f(p['size'])} {coin}" + (f" ({u})" if u else "") + f", вход {_f(p.get('avg'), 1)}")
+        if px:
+            lines.append(f"Цена {_f(px, 1)}"
+                         + (f" · PnL <b>{pnl_str(p['pnl'], p.get('pnl_pct'))}</b>" if p.get("pnl") is not None else ""))
+        if p.get("tp") or p.get("sl"):
+            lines.append(f"TP {_f(p.get('tp'), 1)} · SL {_f(p.get('sl'), 1)}")
+        else:
+            lines.append("TP/SL не стоят" if p.get("tpsl_known") else "TP/SL не прочитаны")
+        c, o = ours.pop(key, None), own.pop(key, None)
+        if c:
+            lines.append(("Твоя копия (отцеплена, не трогаю): " if c.get("detached") else "Твоя копия: ")
+                         + _mine(c, px))
+        if o:
+            lines.append("У тебя своя, не копия: " + _mine(o, px))
+        if not c and not o:
+            lines.append("Копии нет · войти: /copy → «➕ Войти»")
+    if not his:
+        lines += ["", "Раст: позиций нет"]
+    rest = [("Копия", c) for c in ours.values()] + [("Своя позиция", o) for o in own.values()]
+    if rest:
+        lines.append("")
+    for name, c in rest:
+        flag = " (отцеплена, не трогаю)" if c.get("detached") else ""
+        lines.append(f"{name} без позиции у Раста: {SIDE_ICON.get(c.get('side'), '')} "
+                     f"{(c.get('side') or '').upper()} {c['symbol']} {_mine(c, None)}{flag}")
+
+    ev = st.get("events") or []
+    if ev:
+        lines += ["", "<b>Последние сообщения</b>"]
+        for e in ev[-3:]:
+            lines.append(f"{shared.perm_time(e['t'])} {_e(e['text'].splitlines()[0][:90])}")
+    return "\n".join(lines)
+
+
+def status_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Обновить", callback_data="copy:status"),
+         InlineKeyboardButton("📸 Кадр со стрима", callback_data="copy:shot")],
+        [InlineKeyboardButton("⚙️ Панель /copy", callback_data="copy:refresh")],
+    ])
 
 
 def enter_buttons(s: dict) -> list:
@@ -122,7 +232,9 @@ def keyboard() -> InlineKeyboardMarkup:
          InlineKeyboardButton(f"множитель {s['mult']}", callback_data="copy:refresh"),
          InlineKeyboardButton("× +0.1", callback_data="copy:mult:+")],
         [InlineKeyboardButton("🔄 Обновить", callback_data="copy:refresh"),
-         InlineKeyboardButton("Закрыть копии", callback_data="copy:closeall")],
+         InlineKeyboardButton("📊 Статус", callback_data="copy:status"),
+         InlineKeyboardButton("📸 Кадр", callback_data="copy:shot")],
+        [InlineKeyboardButton("Закрыть копии", callback_data="copy:closeall")],
     ])
 
 
@@ -132,13 +244,49 @@ class CopyPanel:
 
     def handlers(self) -> list:
         return [CommandHandler("copy", self.cmd_copy), CommandHandler("copy_mult", self.cmd_mult),
-                CommandHandler("copy_mode", self.cmd_mode),
+                CommandHandler("copy_mode", self.cmd_mode), CommandHandler("copy_status", self.cmd_status),
+                CommandHandler("copy_shot", self.cmd_shot),
                 CallbackQueryHandler(self.on_callback, pattern=r"^copy:")]
 
     async def cmd_copy(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.is_admin(update.effective_user.id):
             return
         await update.message.reply_text(status_text(), reply_markup=keyboard())
+
+    async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self.is_admin(update.effective_user.id):
+            return
+        await update.message.reply_text(status_brief(), parse_mode="HTML", reply_markup=status_keyboard())
+
+    async def cmd_shot(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self.is_admin(update.effective_user.id):
+            return
+        await self._send_shot(update.message)
+
+    @staticmethod
+    async def _send_shot(message, timeout: float = 10.0) -> None:
+        """Просит у копировщика последний кадр стрима и присылает его фото."""
+        cid = shared.add_command("snapshot")["commands"][-1]["id"]
+        info, waited = {}, 0.0
+        while waited < timeout:
+            await asyncio.sleep(0.25)
+            waited += 0.25
+            info = shared.read_snapshot_info()
+            if info.get("cmd") == cid:
+                break
+        else:
+            await message.reply_text(f"Копировщик не ответил за {int(timeout)} с — кадр не получить. "
+                                     f"Проверь /copy_status.")
+            return
+        if not info.get("ok"):
+            await message.reply_text(f"Кадра нет: {info.get('reason') or 'неизвестно почему'}.")
+            return
+        t = info.get("t")
+        when = f"{shared.perm_time(t, '%H:%M:%S')} Пермь ({shared.ago(t)})" if t else "время неизвестно"
+        cap = (f"📸 Кадр со стрима {when} · {'в эфире' if info.get('online') else 'стрим офлайн'} · "
+               f"{info.get('seen') or ''}")
+        with open(shared.snapshot_path(), "rb") as f:
+            await message.reply_photo(photo=f, caption=cap[:1000])
 
     async def cmd_mult(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.is_admin(update.effective_user.id):
@@ -189,6 +337,14 @@ class CopyPanel:
             except BadRequest:
                 pass
             return
+        if action == "status":
+            await q.answer()
+            await self._edit(q, status_brief(), status_keyboard(), html_mode=True)
+            return
+        if action == "shot":
+            await q.answer("Беру кадр со стрима…")
+            await self._send_shot(q.message)
+            return
         if action == "enter":
             shared.add_command("enter", symbol=parts[2], side=parts[3])
             note = f"Пришлю расчёт входа в {parts[3].upper()} {parts[2]} с кнопками"
@@ -235,9 +391,9 @@ class CopyPanel:
         await self._edit(q, (note + "\n\n" if note else "") + status_text(), keyboard())
 
     @staticmethod
-    async def _edit(q, text, markup) -> None:
+    async def _edit(q, text, markup, html_mode: bool = False) -> None:
         try:
-            await q.edit_message_text(text, reply_markup=markup)
+            await q.edit_message_text(text, reply_markup=markup, parse_mode="HTML" if html_mode else None)
         except BadRequest as e:
             if "not modified" not in str(e).lower():
                 raise

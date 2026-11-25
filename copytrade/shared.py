@@ -1,11 +1,13 @@
 """Общие файлы с крипто-ботом (том copier-data): settings.json пишет бот, status.json — копировщик."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import time
 
 DATA_DIR = os.environ.get("COPIER_DATA", "/app/copier_data")
+PERM = dt.timezone(dt.timedelta(hours=5))      # всё время в сообщениях — пермское (серверы живут в UTC)
 MODES = ("off", "notify", "demo", "live")
 DEFAULTS = {
     "mode": "notify",          # off | notify | demo | live
@@ -73,3 +75,29 @@ def write_status(status: dict) -> None:
 
 def read_status() -> dict:
     return _read("status.json")
+
+
+def perm_time(ts: float, fmt: str = "%H:%M") -> str:
+    return dt.datetime.fromtimestamp(ts, PERM).strftime(fmt)
+
+
+def ago(ts: float, now: float = None) -> str:
+    d = max(0, int((now or time.time()) - ts))
+    if d < 60:
+        return f"{d} с назад"
+    if d < 3600:
+        return f"{d // 60} мин назад"
+    return f"{d // 3600} ч {d % 3600 // 60} мин назад"
+
+
+def snapshot_path() -> str:
+    """Кадр со стрима по кнопке «📸»: копировщик пишет, бот отправляет."""
+    return _path("snapshot.jpg")
+
+
+def write_snapshot_info(info: dict) -> None:
+    _write("snapshot.json", info)
+
+
+def read_snapshot_info() -> dict:
+    return _read("snapshot.json")

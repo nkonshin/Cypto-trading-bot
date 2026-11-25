@@ -89,6 +89,8 @@ class App:
         self.his_balance = None
         self.our_equity = None
         self.prices: dict = {}             # монета -> цена BingX (для PnL Раста в /copy)
+        self.exch_pos: dict = {}           # (монета, сторона) -> позиция на бирже: вход, PnL (для статуса)
+        self.latest, self.latest_t = None, 0.0     # последний кадр со стрима (для «📸 Кадр»)
         self.blind_alerted = False
         self.offline_alerted = False
         # команды, лежавшие до запуска, не выполняем повторно (например «закрыть копии» перед рестартом)
@@ -128,6 +130,7 @@ class App:
             except Exception:
                 pass
         self.adapter, self.copier, self.our_equity = None, None, None
+        self.exch_pos = {}
         if mode in ("demo", "live") and not (os.environ.get("BINGX_API_KEY") and os.environ.get("BINGX_API_SECRET")):
             await self.tg.send(f"Режим {mode} не включён: нет BINGX_API_KEY/BINGX_API_SECRET в .env. Остаюсь в notify.")
             mode = "notify"
@@ -209,6 +212,7 @@ class App:
 
     async def on_frame(self, frame, loop=None) -> None:
         now = time.time()
+        self.latest, self.latest_t = frame, now
         ok = self.tracker.last_reading is not None and self.tracker.last_reading.ok
         pending = (self.tracker._cand_key is not None and self.tracker.confirmed is not None
                    and self.tracker._cand_key != _key(self.tracker.confirmed.values()))
@@ -247,7 +251,7 @@ class App:
             import cv2
             d = os.path.join(shared.DATA_DIR, "frames")
             os.makedirs(d, exist_ok=True)
-            cv2.imwrite(os.path.join(d, f"{time.strftime('%Y%m%d-%H%M%S')}_{tag}.jpg"), self.frame,
+            cv2.imwrite(os.path.join(d, f"{shared.perm_time(time.time(), '%Y%m%d-%H%M%S')}_{tag}.jpg"), self.frame,
                         [cv2.IMWRITE_JPEG_QUALITY, 90])
             for old in sorted(os.listdir(d))[:-300]:
                 os.remove(os.path.join(d, old))
@@ -299,7 +303,7 @@ class App:
         paused = is_paused(s, now)
         if paused and not self.was_paused:
             self.pause_reminded = now
-            until = "без срока" if pu == -1 else "до " + time.strftime("%H:%M", time.localtime(pu))
+            until = "без срока" if pu == -1 else "до " + shared.perm_time(pu)
             await self.tg.send(f"⏸ Пауза {until}. Я только смотрю и пишу, что делает Раст; твои позиции не трогаю.")
         if not paused and self.was_paused and self.copier:
             reason = "▶️ Пауза закончилась, продолжаю копирование. Сверка позиций:"
@@ -323,7 +327,9 @@ class App:
             self.done_commands.add(cid)
             if time.time() - cmd.get("t", 0) > 600:
                 continue                                         # старые команды после перезапуска не выполняем
-            if cmd.get("name") == "close_all" and self.copier:
+            if cmd.get("name") == "snapshot":
+                self.write_snapshot(cid)
+            elif cmd.get("name") == "close_all" and self.copier:
                 await self._send(await self.copier.close_all() or ["Закрывать нечего: копий нет."])
             elif cmd.get("name") == "enter" and self.copier:
                 key = (cmd.get("symbol"), cmd.get("side"))
@@ -332,6 +338,30 @@ class App:
                 await self._send(await self.copier.answer_offer(cmd["offer"], bool(cmd.get("yes")),
                                                                 self.rast_now(), await self.k_now(),
                                                                 cmd.get("choice")))
+
+    def write_snapshot(self, cid: str) -> None:
+        """Последний кадр со стрима в copier_data/snapshot.jpg — бот пришлёт его фото."""
+        lr = self.tracker.last_reading
+        info = {"cmd": cid, "ok": False, "t": self.latest_t or None, "online": bool(self.source.online),
+                "seen": ("панель видна" if lr and lr.ok else f"панель не видна: {lr.reason}" if lr else "ещё не читал")}
+        if self.latest is None:
+            err = getattr(self.source, "last_error", "")
+            info["reason"] = "кадров со стрима ещё не было" + (f" ({err})" if err else "")
+        else:
+            try:
+                import cv2
+                ok, buf = cv2.imencode(".jpg", self.latest, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if not ok:
+                    raise RuntimeError("cv2.imencode")
+                tmp = shared.snapshot_path() + ".tmp"
+                with open(tmp, "wb") as f:
+                    f.write(buf.tobytes())
+                os.replace(tmp, shared.snapshot_path())
+                info["ok"] = True
+            except Exception as e:
+                log.warning("snapshot: %r", e)
+                info["reason"] = repr(e)
+        shared.write_snapshot_info(info)
 
     async def settings_loop(self) -> None:
         while True:
@@ -376,6 +406,36 @@ class App:
             except Exception as e:
                 log.warning("price %s: %r", raw, e)
 
+    async def refresh_exchange(self) -> None:
+        """Позиции на бирже по монетам Раста и копий: вход и PnL для статуса, свои (не копии) — отдельно."""
+        if self.adapter is None:
+            self.exch_pos = {}
+            return
+        raws = {p.symbol for p in (self.tracker.confirmed or {}).values()}
+        if self.copier:
+            raws |= {key[0] for key in self.copier.syms}
+        out = {}
+        for raw in raws:
+            info = self.adapter.market(raw)
+            if info is None:
+                continue
+            try:
+                for p in await self.adapter.open_positions(info.symbol):
+                    if p.get("side") in ("long", "short"):
+                        out[(raw, p["side"])] = p
+            except Exception as e:
+                log.warning("positions %s: %r", raw, e)
+                out.update({k: v for k, v in self.exch_pos.items() if k[0] == raw})   # оставляю прошлые
+        self.exch_pos = out
+
+    def _pnl(self, raw: str, side: str, amount: Optional[float], x: dict) -> dict:
+        """PnL нашей позиции по той же цене, что и у Раста (или от биржи, если цены нет); % — от маржи."""
+        entry, lev, px = x.get("entry"), x.get("leverage"), self.prices.get(raw)
+        v = ((px - entry) * amount * (1 if side == "long" else -1) if entry and px and amount
+             else x.get("pnl"))
+        pct = v / (amount * entry / lev) * 100 if v is not None and entry and lev and amount else None
+        return {"entry": entry, "pnl": v, "pnl_pct": pct}
+
     async def status_loop(self) -> None:
         while True:
             try:
@@ -384,6 +444,7 @@ class App:
             except Exception as e:
                 log.warning("balance: %r", e)
             await self.refresh_prices()
+            await self.refresh_exchange()
             for _ in range(20):
                 if any(p.symbol not in self.prices for p in (self.tracker.confirmed or {}).values()):
                     await self.refresh_prices()          # новая монета у Раста — цена для PnL сразу, не через минуту
@@ -398,12 +459,16 @@ class App:
             px = self.prices.get(p.symbol)
             r = his_pnl(p, px)
             his.append({"symbol": p.symbol, "side": p.side, "size": p.size, "avg": p.avg, "leverage": p.leverage,
-                        "tp": p.tp, "sl": p.sl, "price": px, "pnl": r[0] if r else None,
-                        "pnl_pct": r[1] if r else None})
+                        "tp": p.tp, "sl": p.sl, "tpsl_known": p.tpsl_known, "price": px,
+                        "pnl": r[0] if r else None, "pnl_pct": r[1] if r else None})
         ours = []
-        if self.copier:
-            for key, st in self.copier.syms.items():
-                ours.append({"symbol": key[0], "side": st.side, "amount": st.expected, "detached": st.detached})
+        syms = self.copier.syms if self.copier else {}
+        for key, st in syms.items():
+            ours.append({"symbol": key[0], "side": st.side, "amount": st.expected, "detached": st.detached,
+                         **self._pnl(key[0], st.side, st.expected, self.exch_pos.get(key) or {})})
+        own = [{"symbol": key[0], "side": key[1], "amount": x.get("amount"),
+                **self._pnl(key[0], key[1], x.get("amount"), x)}
+               for key, x in self.exch_pos.items() if key not in syms]
         k = None
         if self.our_equity and self.his_balance:
             k = self.our_equity / self.his_balance * float(self.settings["mult"])
@@ -411,7 +476,9 @@ class App:
             "mode": self.mode, "mult": self.settings["mult"], "k": k, "online": self.source.online,
             "auto": bool(self.settings.get("auto")),
             "seen_ok": bool(lr and lr.ok), "reason": lr.reason if lr else "", "blind_for": t.blind_for(),
-            "his_positions": his, "his_balance": self.his_balance, "our_positions": ours,
+            "his_positions": his, "his_balance": self.his_balance, "our_positions": ours, "own_positions": own,
+            "started": self.started, "last_frame": self.latest_t, "last_ocr": self.last_ocr,
+            "last_ok": t.last_ok, "last_balance": self.last_balance,
             "our_equity": self.our_equity, "paused_until": self.settings.get("paused_until") or 0,
             "offers": len(self.copier.offers) if self.copier else 0,
             "events": list(self.events)[-8:], "pid": os.getpid(),

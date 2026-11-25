@@ -80,10 +80,10 @@ class PaperAdapter:
     async def open_positions(self, sym: str) -> list:
         """Все открытые позиции по монете: [{side, amount, entry, pnl}] (у бумажного входа и PnL нет)."""
         if self.hedged:
-            return [{"side": s, "amount": a, "entry": None, "pnl": None}
+            return [{"side": s, "amount": a, "entry": None, "pnl": None, "leverage": None}
                     for (ps, s), a in self.hpos.items() if ps == sym and a > 1e-12]
         side, amt = self.positions.get(sym, (None, 0.0))
-        return [{"side": side, "amount": amt, "entry": None, "pnl": None}] if amt > 1e-12 else []
+        return [{"side": side, "amount": amt, "entry": None, "pnl": None, "leverage": None}] if amt > 1e-12 else []
 
     async def balance(self):
         used = 0.0
@@ -181,9 +181,10 @@ class CcxtAdapter:
         for p in await self.ex.fetch_positions([sym]):
             amt = float(p.get("contracts") or 0) * float(p.get("contractSize") or 1)
             if amt > 0:
-                entry, pnl = p.get("entryPrice"), p.get("unrealizedPnl")
+                entry, pnl, lev = p.get("entryPrice"), p.get("unrealizedPnl"), p.get("leverage")
                 out.append({"side": p.get("side"), "amount": amt, "entry": float(entry) if entry else None,
-                            "pnl": float(pnl) if pnl is not None else None})
+                            "pnl": float(pnl) if pnl is not None else None,
+                            "leverage": float(lev) if lev else None})
         return out
 
     async def balance(self):

@@ -197,3 +197,48 @@ def test_turning_auto_on_sends_resync(app):
     texts = app.tg.texts()
     assert any("Автомат включён" in t for t in texts)
     assert app.tg.sent[-1].buttons[0][0] == "✅ Вести как копию"
+
+
+
+def test_snapshot_command_writes_last_frame(app, tmp_path):
+    import numpy as np
+    from types import SimpleNamespace
+    app.source = SimpleNamespace(online=True, last_error="")
+    shared.add_command("snapshot")
+    asyncio.run(app.apply_settings())
+    info = shared.read_snapshot_info()
+    assert info["ok"] is False and "кадров со стрима ещё не было" in info["reason"]
+    app.latest, app.latest_t = np.zeros((90, 160, 3), np.uint8), 123.0
+    cid = shared.add_command("snapshot")["commands"][-1]["id"]
+    asyncio.run(app.apply_settings())
+    info = shared.read_snapshot_info()
+    assert (info["cmd"], info["ok"], info["t"], info["online"]) == (cid, True, 123.0, True)
+    assert (tmp_path / "snapshot.jpg").read_bytes()[:2] == b"\xff\xd8"          # JPEG
+
+
+def test_status_has_times_and_own_positions(app):
+    from types import SimpleNamespace
+    app.source = SimpleNamespace(online=True)
+    confirm(app, P(side="long"))
+    app.adapter.positions[BTC] = ("long", 0.05)                       # своя позиция, бот её не ведёт
+
+    async def positions(sym):
+        return [{"side": "long", "amount": 0.05, "entry": 58000.0, "pnl": 1.0, "leverage": 10.0}]
+    app.adapter.open_positions = positions
+    app.latest_t, app.last_ocr = 100.0, 99.0
+    asyncio.run(app.refresh_prices())
+    asyncio.run(app.refresh_exchange())
+    app.write_status()
+    st = shared.read_status()
+    assert (st["last_frame"], st["last_ocr"]) == (100.0, 99.0) and st["our_positions"] == []
+    (o,) = st["own_positions"]
+    assert (o["side"], o["amount"], o["entry"]) == ("long", 0.05, 58000.0)
+    assert round(o["pnl"], 2) == 50.0 and round(o["pnl_pct"], 1) == 17.2   # по цене 59 000, маржа 290
+    assert st["his_positions"][0]["tpsl_known"] is False
+
+
+def test_pause_message_in_perm_time(app):
+    until = time.time() + 3600
+    shared.save_settings(paused_until=until)
+    asyncio.run(app.apply_settings())
+    assert any(f"Пауза до {shared.perm_time(until)}" in t for t in app.tg.texts())
