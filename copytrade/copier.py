@@ -179,6 +179,33 @@ class Copier:
                 f"мой остаётся на {fmt(st.sl)}" if st.sl_tighten else "SL — за Растом, куда бы он его ни ставил")
         return [self._m(f"🛡 {kname(key)} {fmt(st.expected)}: {adds}; {stop}.")]
 
+    async def set_sl(self, key: tuple, sl: float) -> list:
+        """Свой SL для копии по команде Никиты: ставлю на весь объём и дальше только подтягиваю за Растом."""
+        st, info = self.syms.get(key), self.ex.market(key[0])
+        if not self.managed(key) or info is None:
+            return [self._m(f"Копии {kname(key)} сейчас нет — ставить SL не на что.")]
+        try:
+            px = await self.ex.price(info.symbol)
+        except Exception as e:
+            return [self._m(f"ОШИБКА: не получил цену {key[0]}: {e}. SL не трогал.")]
+        if (st.side == "long" and sl >= px) or (st.side == "short" and sl <= px):
+            return [self._m(f"SL {fmt(sl)} по ту сторону цены {fmt(px)} для {st.side.upper()} — сработал бы сразу. "
+                            f"Не ставлю, SL остаётся {fmt(st.sl)}.")]
+        try:
+            drift = await self._check_drift(key, info)
+            if drift:
+                return [self._m(drift if drift != "detached" else f"{kname(key)} отцеплена — не трогаю.")]
+            old = list(st.stop_ids)
+            st.stop_ids = await self.ex.set_stops(info.symbol, st.side, st.expected, st.tp, sl)   # сначала новые
+            await self.ex.cancel_stops(info.symbol, old)                                         # потом старые
+            st.sl, st.sl_tighten = sl, True
+        except Exception as e:
+            log.exception("set_sl %s", key)
+            return [self._m(f"ОШИБКА при установке SL {kname(key)}: {e}")]
+        return [self._m(f"🛡 SL {kname(key)} → {fmt(sl)} на весь объём {fmt(st.expected)} (TP {fmt(st.tp)}). "
+                        f"Дальше только подтягиваю: Раст подвинет стоп ближе к цене — подвину, "
+                        f"отодвинет или уберёт — останется {fmt(sl)}.")]
+
     # ---------- предложения ----------
     def _offer(self, kind: str, key: tuple, text: str, yes="Делаем", no="Не делаем", keep: Optional[str] = None,
                flip: Optional[str] = None) -> Msg:
@@ -628,7 +655,7 @@ class Copier:
         tp, sl = (p.tp, p.sl) if p.tpsl_known else (st.tp, st.sl)
         note = ""
         if st.sl_tighten and st.sl and (sl is None or (sl < st.sl if st.side == "long" else sl > st.sl)):
-            note = (f"Раст {'убрал SL' if sl is None else f'отодвинул SL до {fmt(sl)}'} — твой SL оставляю "
+            note = (f"{'Раст убрал SL' if sl is None else f'SL Раста — {fmt(sl)}'}, твой SL оставляю "
                     f"на {fmt(st.sl)} (стоп только подтягиваю).")
             sl = st.sl
         if not force and (tp, sl) == (st.tp, st.sl) and st.stop_ids:

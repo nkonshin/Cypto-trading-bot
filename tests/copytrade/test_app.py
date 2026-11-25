@@ -260,3 +260,14 @@ def test_guard_command_sets_flags_and_status_shows_them(app):
     app.write_status()
     (o,) = shared.read_status()["our_positions"]
     assert o["no_add"] and o["sl_tighten"]
+
+
+
+def test_set_sl_command(app):
+    shared.save_settings(auto=True)
+    asyncio.run(app.apply_settings())
+    asyncio.run(app.on_event(Event("open", "BTCUSDT", None, P())))    # SHORT, цена 59 000
+    shared.add_command("set_sl", symbol="BTCUSDT", side="short", sl=59800.0)
+    asyncio.run(app.apply_settings())
+    assert "SL SHORT BTCUSDT → 59 800" in app.tg.texts()[-1]
+    assert app.adapter.stops[BTC]["sl"] == 59800.0

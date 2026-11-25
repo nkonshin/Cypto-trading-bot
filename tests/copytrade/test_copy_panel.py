@@ -334,3 +334,24 @@ def test_guard_buttons_and_command():
     u, ctx = cb_update(FATHER, "copy:guard:BTCUSDT:short:no_add:1")
     run(p.on_callback(u, ctx))
     assert len(shared.load_settings()["commands"]) == 1
+
+
+
+def test_copy_sl_command():
+    p = panel()
+    u, ctx = msg_update(ADMIN, ["59600"])
+    run(p.cmd_sl(u, ctx))
+    assert "Копий под это нет" in u.message.reply_text.call_args[0][0]
+    his_status(ours=[{"symbol": "BTCUSDT", "side": "long", "amount": 0.0972, "detached": False}])
+    u, ctx = msg_update(ADMIN, ["59 600".replace(" ", "")])
+    run(p.cmd_sl(u, ctx))
+    cmd = shared.load_settings()["commands"][-1]
+    assert (cmd["name"], cmd["symbol"], cmd["side"], cmd["sl"]) == ("set_sl", "BTCUSDT", "long", 59600.0)
+    assert "Ставлю SL 59 600 на копию LONG BTCUSDT" in u.message.reply_text.call_args[0][0]
+    u, ctx = msg_update(ADMIN, ["abc"])
+    run(p.cmd_sl(u, ctx))
+    assert "Формат" in u.message.reply_text.call_args[0][0]
+    u, ctx = msg_update(FATHER, ["59600"])
+    run(p.cmd_sl(u, ctx))
+    u.message.reply_text.assert_not_called()
+    assert len(shared.load_settings()["commands"]) == 1

@@ -1,7 +1,8 @@
 """Управление копированием сделок Раста — только для админа (main_user_id).
 
 Бот пишет настройки в общий том (copier-data/settings.json), копировщик пишет статус (status.json).
-Команды: /copy, /copy_status, /copy_shot, /copy_mult 1.2, /copy_mode notify|demo|live|off.
+Команды: /copy, /copy_status, /copy_shot, /copy_sl 59600 [long|short] [BTCUSDT], /copy_mult 1.2,
+/copy_mode notify|demo|live|off.
 Кнопки уведомлений копировщика (copy:offer:<id>:yes|no) тоже приходят сюда.
 «➕ Войти …» (copy:enter:<монета>:<сторона>) — для позиций Раста без копии: копировщик пришлёт расчёт с кнопками.
 «📸 Кадр» — копировщик пишет последний кадр стрима в copier_data/snapshot.jpg, бот присылает фото.
@@ -273,7 +274,7 @@ class CopyPanel:
     def handlers(self) -> list:
         return [CommandHandler("copy", self.cmd_copy), CommandHandler("copy_mult", self.cmd_mult),
                 CommandHandler("copy_mode", self.cmd_mode), CommandHandler("copy_status", self.cmd_status),
-                CommandHandler("copy_shot", self.cmd_shot),
+                CommandHandler("copy_shot", self.cmd_shot), CommandHandler("copy_sl", self.cmd_sl),
                 CallbackQueryHandler(self.on_callback, pattern=r"^copy:")]
 
     async def cmd_copy(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -315,6 +316,32 @@ class CopyPanel:
                f"{info.get('seen') or ''}")
         with open(shared.snapshot_path(), "rb") as f:
             await message.reply_photo(photo=f, caption=cap[:1000])
+
+    async def cmd_sl(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """/copy_sl 59600 [long|short] [BTCUSDT] — свой SL для копии; дальше бот его только подтягивает."""
+        if not self.is_admin(update.effective_user.id):
+            return
+        args = [a.strip() for a in context.args or []]
+        usage = "Формат: /copy_sl 59600 — SL для копии (если копий несколько: /copy_sl 59600 long BTCUSDT)"
+        try:
+            sl = float(args[0].replace(",", ".").replace(" ", ""))
+            if sl <= 0:
+                raise ValueError
+        except (IndexError, ValueError):
+            await update.message.reply_text(usage)
+            return
+        side = next((a.lower() for a in args[1:] if a.lower() in ("long", "short")), None)
+        sym = next((a.upper() for a in args[1:] if a.upper().endswith("USDT")), None)
+        copies = [p for p in (shared.read_status().get("our_positions") or []) if not p.get("detached")
+                  and (side is None or p.get("side") == side) and (sym is None or p["symbol"] == sym)]
+        if len(copies) != 1:
+            await update.message.reply_text("Копий под это нет." if not copies else
+                                            "Копий несколько — укажи какую. " + usage)
+            return
+        c = copies[0]
+        shared.add_command("set_sl", symbol=c["symbol"], side=c["side"], sl=sl)
+        await update.message.reply_text(f"Ставлю SL {_f(sl, 1)} на копию {c['side'].upper()} {c['symbol']} "
+                                        f"({_f(c.get('amount'))}), подтверждение придёт сообщением.")
 
     async def cmd_mult(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.is_admin(update.effective_user.id):

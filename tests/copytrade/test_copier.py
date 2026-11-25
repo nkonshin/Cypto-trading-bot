@@ -524,7 +524,7 @@ def test_sl_only_tightens_for_long():
     def moved(sl, tp=66666.0):
         return P(side="long", size=0.4, avg=59045.6, margin=590.0, tp=tp, sl=sl, known=True)
     (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", his, moved(57800.0)), 0.14, auto=True))   # отодвинул вниз
-    assert "отодвинул SL до 57 800" in m.text and "оставляю на 58 500" in m.text
+    assert "SL Раста — 57 800, твой SL оставляю на 58 500" in m.text
     assert ad.stops[BTC]["sl"] == 58500.0 and c.syms[key].sl == 58500.0
     (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", his, moved(59300.0)), 0.14, auto=True))   # подтянул вверх
     assert ad.stops[BTC]["sl"] == 59300.0 and "SL 59 300" in m.text
@@ -563,3 +563,22 @@ def test_guard_needs_a_copy_and_readopt_cancels_old_stops():
     ad.cancel_stops = cancel
     run(c._adopt(("BTCUSDT", "long"), his))
     assert cancelled[:len(old_ids)] == old_ids and old_ids
+
+
+
+def test_own_sl_for_copy_then_only_tightens():
+    """Случай 26.11: SL копии — 59 600 (как свой у Никиты), а не 58 500 Раста."""
+    ad, c, his = adopted_long()
+    key = ("BTCUSDT", "long")
+    (m,) = run(c.set_sl(key, 59600.0))
+    assert "SL LONG BTCUSDT → 59 600 на весь объём 0.0972" in m.text
+    assert ad.stops[BTC] == {"tp": 66666.0, "sl": 59600.0, "amount": 0.0972} and c.syms[key].sl_tighten
+    lower = P(side="long", size=0.4, avg=59045.6, margin=590.0, tp=66666.0, sl=59000.0, known=True)
+    (m,) = run(c.on_event(Event("tpsl", "BTCUSDT", his, lower), 0.14, auto=True))
+    assert ad.stops[BTC]["sl"] == 59600.0 and "оставляю на 59 600" in m.text
+    higher = P(side="long", size=0.4, avg=59045.6, margin=590.0, tp=66666.0, sl=59900.0, known=True)
+    run(c.on_event(Event("tpsl", "BTCUSDT", lower, higher), 0.14, auto=True))
+    assert ad.stops[BTC]["sl"] == 59900.0
+    (m,) = run(c.set_sl(key, 61000.0))                             # выше цены 60 170 — сработал бы сразу
+    assert "сработал бы сразу" in m.text and ad.stops[BTC]["sl"] == 59900.0
+    assert "ставить SL не на что" in run(c.set_sl(("BTCUSDT", "short"), 61000.0))[0].text

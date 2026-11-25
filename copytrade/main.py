@@ -332,6 +332,8 @@ class App:
             elif cmd.get("name") == "guard" and self.copier:
                 await self._send(self.copier.set_guard((cmd.get("symbol"), cmd.get("side")), cmd.get("no_add"),
                                                        cmd.get("sl_tighten")))
+            elif cmd.get("name") == "set_sl" and self.copier:
+                await self._send(await self.copier.set_sl((cmd.get("symbol"), cmd.get("side")), float(cmd["sl"])))
             elif cmd.get("name") == "close_all" and self.copier:
                 await self._send(await self.copier.close_all() or ["Закрывать нечего: копий нет."])
             elif cmd.get("name") == "enter" and self.copier:

@@ -43,6 +43,8 @@ class PaperAdapter:
         self.positions: dict = {}      # one-way: ccxt symbol -> (side, amount)
         self.hpos: dict = {}           # hedge: (ccxt symbol, side) -> amount
         self.stops: dict = {}          # ccxt symbol -> {"tp":..,"sl":..,"amount":..}
+        self.stop_ids: dict = {}       # ccxt symbol -> id текущих стопов (снимаются, как на бирже, только по id)
+        self._sid = 0
         self.orders: list = []
         self._public = None
 
@@ -119,12 +121,17 @@ class PaperAdapter:
         return px
 
     async def set_stops(self, sym: str, pos_side: str, amount: float, tp, sl) -> list:
+        self._sid += 1
+        ids = [f"{sym}:tp:{self._sid}", f"{sym}:sl:{self._sid}"]
         self.stops[sym] = {"tp": tp, "sl": sl, "amount": amount}
+        self.stop_ids[sym] = ids
         self.orders.append(("stops", sym, tp, sl, amount))
-        return [f"{sym}:tp", f"{sym}:sl"]
+        return ids
 
     async def cancel_stops(self, sym: str, ids: list) -> None:
-        self.stops.pop(sym, None)
+        if set(ids or []) & set(self.stop_ids.get(sym, [])):
+            self.stops.pop(sym, None)
+            self.stop_ids.pop(sym, None)
 
 
 class CcxtAdapter:
