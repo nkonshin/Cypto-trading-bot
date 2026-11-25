@@ -67,12 +67,24 @@ def side_by_color(frame: np.ndarray, x: int, y: int, w: int = 40, h: int = 11) -
     return None
 
 
+FORM_TTL = 60.0   # форма ордера меняется редко — читаем её не чаще раза в минуту (экономия CPU)
+
+
 class PanelReader:
     def __init__(self, ocr=None):
         if ocr is None:
             from rapidocr_onnxruntime import RapidOCR
             ocr = RapidOCR()
         self.ocr = ocr
+        self._form = (None, None)
+        self._form_at = 0.0
+
+    def form(self, frame, force: bool = False):
+        """(монета, плечо) из формы ордера, с кешем на FORM_TTL."""
+        if force or time.time() - self._form_at > FORM_TTL or self._form == (None, None):
+            self._form = parse_form(self.ocr_boxes(frame, FORM_HEADER, 2), self.ocr_boxes(frame, FORM_LEV, 2))
+            self._form_at = time.time()
+        return self._form
 
     def ocr_boxes(self, frame: np.ndarray, rect, scale: int) -> list:
         x, y, w, h = (int(v) for v in rect)
@@ -110,11 +122,18 @@ class PanelReader:
         if len(cards) != 1:
             return Reading(False, (), n, balance, "карточка позиции не найдена", now)
         sym_box, symbol = cards[0]
-        # объём второй раз — отдельной вырезкой ×4: два независимых чтения должны совпасть
-        sb = self.ocr_boxes(frame, (px0 + SIZE_DX, py0 + sym_box.y + SIZE_DY, SIZE_W, SIZE_H), 4)
-        size_x4 = next((parse_number(b.text) for b in sb if b.conf >= 0.85 and parse_number(b.text)), None)
-        form_sym, form_lev = parse_form(self.ocr_boxes(frame, FORM_HEADER, 2), self.ocr_boxes(frame, FORM_LEV, 2))
-        pos, why = parse_card(boxes, sym_box, symbol, size_x4, form_lev if form_sym == symbol else None)
+        # объём ещё трижды — отдельной вырезкой ×3/×4/×5; вместе с панелью это голосование (нужно ≥2 совпадения)
+        rect = (px0 + SIZE_DX, py0 + sym_box.y + SIZE_DY, SIZE_W, SIZE_H)
+        votes = []
+        for sc in (3, 4, 5):
+            sb = self.ocr_boxes(frame, rect, sc)
+            votes.append(next((parse_number(b.text) for b in sb if b.conf >= 0.85 and parse_number(b.text)), None))
+        self.last_votes = votes
+        form_sym, form_lev = self.form(frame)
+        pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
+        if pos is None and "плечом" in why:            # вдруг он поменял плечо — перечитать форму сразу
+            form_sym, form_lev = self.form(frame, force=True)
+            pos, why = parse_card(boxes, sym_box, symbol, None, form_lev if form_sym == symbol else None, votes)
         if pos is None:
             return Reading(False, (), n, balance, why, now)
         side = side_by_color(frame, int(px0 + sym_box.x - 2), int(py0 + sym_box.y + 11))

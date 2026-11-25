@@ -136,7 +136,21 @@ def parse_form(header_boxes, lev_boxes):
     return sym, lev
 
 
-def parse_card(boxes, sym_box: Box, symbol: str, size_x4: Optional[float] = None, form_lev: Optional[int] = None):
+def vote(values) -> Optional[float]:
+    """Значение, за которое ≥2 чтений, если у него нет равного соперника; иначе None."""
+    counts = {}
+    for v in values:
+        if v is not None:
+            counts[v] = counts.get(v, 0) + 1
+    if not counts:
+        return None
+    best = max(counts.values())
+    winners = [v for v, c in counts.items() if c == best]
+    return winners[0] if best >= 2 and len(winners) == 1 else None
+
+
+def parse_card(boxes, sym_box: Box, symbol: str, size_x4: Optional[float] = None, form_lev: Optional[int] = None,
+               size_votes: Optional[list] = None):
     """(Pos без стороны/TP-SL | None, причина). Объём, средняя и маржа обязаны сходиться в стандартное плечо —
     это главная защита от ошибок OCR («0.4000» → «04000»)."""
     if not _SYMBOL.match(symbol):
@@ -159,7 +173,13 @@ def parse_card(boxes, sym_box: Box, symbol: str, size_x4: Optional[float] = None
     row2 = _row_below(boxes, avg_label)
     avg = _num_in(row2, 0, 60, 0.85)
     mark = _num_in(row2, 90, 200, 0.85)
-    if size_x4 is not None:
+    if size_votes is not None:
+        # объём читается несколькими вырезками; принимаем, только если ≥2 чтения совпали
+        votes = [size] + list(size_votes)
+        size = vote(votes)
+        if size is None:
+            return None, f"объём не подтверждён двумя чтениями ({votes})"
+    elif size_x4 is not None:
         if size is not None and abs(size - size_x4) > 1e-9:
             return None, f"объём прочитан по-разному ({size} и {size_x4})"
         size = size_x4

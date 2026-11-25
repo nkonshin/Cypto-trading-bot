@@ -24,7 +24,7 @@ from copytrade.vision import ChangeDetector, PanelReader
 
 log = logging.getLogger("copier")
 CHANNEL = os.environ.get("COPY_CHANNEL", "rastpentagon")
-HEARTBEAT_OK, HEARTBEAT_BLIND, BALANCE_EVERY = 30, 10, 300
+HEARTBEAT_OK, HEARTBEAT_BLIND, BALANCE_EVERY = 30, 20, 300
 HIS_BALANCE_MAX_AGE = 15 * 60
 ALERT_AFTER = 180
 PAUSE_REMIND_EVERY = 3 * 3600

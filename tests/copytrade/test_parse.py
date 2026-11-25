@@ -155,3 +155,21 @@ def test_two_size_reads_must_agree():
 def test_parse_form():
     assert parse_form([B(0, 0, "BTCUSDTPerpetual")], [B(0, 0, "lsolated", 0.96), B(90, 0, "50X", 0.92)]) == ("BTCUSDT", 50)
     assert parse_form([B(0, 0, "ETHUSOT Perpetual")], [B(90, 0, "20X", 0.6)]) == ("ETHUSDT", None)
+
+
+
+def test_vote():
+    from copytrade.parse import vote
+    assert vote([0.4, 0.4, None, 0.6]) == 0.4
+    assert vote([0.6, 0.4, None, None]) is None          # 1:1 — не решаем
+    assert vote([0.4, None, None, None]) is None         # одного чтения мало
+    assert vote([0.6, 0.6, 0.4, 0.4]) is None            # ничья
+
+
+def test_parse_card_with_votes_overrules_panel_misread():
+    card = [b if b.text != "0.2000" else b._replace(text="0.6000") for b in CARD]   # панель ошиблась
+    (sb, sym), = find_cards(card)
+    p, why = parse_card(card, sb, sym, form_lev=50, size_votes=[0.2, 0.2, None])
+    assert why == "" and p.size == 0.2
+    p, why = parse_card(card, sb, sym, form_lev=50, size_votes=[None, 0.6, None])     # две ошибки совпали
+    assert p is None                                                                  # но плечо формы ловит
