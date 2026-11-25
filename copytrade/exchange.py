@@ -102,6 +102,7 @@ class CcxtAdapter:
     def __init__(self, api_key: str, secret: str, sandbox: bool):
         import ccxt.async_support as ccxt
         self.name = "demo" if sandbox else "live"
+        self.currency = "VST" if sandbox else "USDT"      # демо-счёт BingX считается в виртуальных VST
         self.ex = ccxt.bingx({"apiKey": api_key, "secret": secret, "enableRateLimit": True,
                               "options": {"defaultType": "swap"}})
         if sandbox:
@@ -146,8 +147,8 @@ class CcxtAdapter:
 
     async def balance(self):
         b = await self.ex.fetch_balance()
-        usdt = b.get("USDT", {})
-        return float(usdt.get("total") or 0), float(usdt.get("free") or 0)
+        cur = b.get(self.currency, {})
+        return float(cur.get("total") or 0), float(cur.get("free") or 0)
 
     def _p(self, extra: dict) -> dict:
         return {**extra, "hedged": True} if self.hedged else extra

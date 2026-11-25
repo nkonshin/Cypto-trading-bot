@@ -202,6 +202,11 @@ class Copier:
             return [self._m(f"{his}\n→ объём {fmt(p.size * k)} (k={k:.3f}) меньше минимального лота "
                             f"{fmt(info.min_amount)}, пропускаю.")]
         try:
+            # своя ручная позиция в ту же сторону (в one-way — в любую) слилась бы с копией: не смешиваем
+            own_side, own = await self.ex.position(info.symbol, p.side)
+            if own > 0 and not self.managed(p.symbol):
+                return [self._m(f"{his}\n→ у тебя уже есть своя позиция {(own_side or '').upper()} {p.symbol} "
+                                f"{fmt(own)}. Копию не открываю, чтобы не смешать с твоей.")]
             px = await self.ex.price(info.symbol)
             _, free = await self.ex.balance()
             amount, cut = fit_margin(amount, px, lev, free, info.step, self.margin_frac)

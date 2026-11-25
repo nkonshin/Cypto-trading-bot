@@ -190,3 +190,16 @@ def test_paper_messages_are_tagged():
     ad = PaperAdapter(markets={BTC: MarketInfo(BTC, 0.0001, 0.0001)}, price_fn=lambda s: 59000.0)
     msgs = run(Copier(ad).on_event(Event("open", "BTCUSDT", None, P()), 0.2))
     assert msgs[0].text.startswith("[тест] ")
+
+
+def test_never_merges_copy_into_own_manual_position():
+    ad, c = make()
+    ad.positions[ETH] = ("long", 2.43)                 # как на реальном счёте Никиты
+    eth = P(side="long", size=2.0, sym="ETHUSDT", avg=3000.0, margin=120.0)
+    (m,) = run(c.on_event(Event("open", "ETHUSDT", None, eth), 0.25))
+    oid = m.buttons[0][1].split(":")[2]
+    out = run(c.answer_offer(oid, True, {"ETHUSDT": eth}, 0.25))
+    assert "своя позиция" in out[0].text and ad.positions[ETH] == ("long", 2.43)
+    ad.positions[BTC] = ("short", 0.01)                # и для автоматического BTC тоже
+    out = run(c.on_event(Event("open", "BTCUSDT", None, P()), 0.2))
+    assert "своя позиция" in out[0].text and ad.positions[BTC] == ("short", 0.01)
