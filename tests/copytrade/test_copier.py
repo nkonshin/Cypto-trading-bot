@@ -95,7 +95,8 @@ def test_baseline_positions_are_ignored_until_closed():
     ad, c = make()
     msgs = run(c.on_baseline((P(),), 0.2, join_existing=False))
     assert BTC not in ad.positions and "не вхожу" in msgs[0]
-    assert run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.3)), 0.2)) == []
+    msgs = run(c.on_event(Event("increase", "BTCUSDT", P(), P(size=0.3)), 0.2))
+    assert "не копирую" in msgs[0] and BTC not in ad.positions
     run(c.on_event(Event("close", "BTCUSDT", P(size=0.3), None), 0.2))
     run(c.on_event(Event("open", "BTCUSDT", None, P(side="long", size=0.1)), 0.2))
     assert ad.positions[BTC] == ("long", 0.02)

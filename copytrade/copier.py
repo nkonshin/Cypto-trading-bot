@@ -81,7 +81,10 @@ class Copier:
                 msgs += await self._close(s, ev.before)
             return msgs + await self._open(ev.after, k)
         if s in self.ignored:
-            return []
+            a, b = ev.before, ev.after
+            what = (f"TP {fmt(b.tp)} / SL {fmt(b.sl)}" if ev.kind == "tpsl"
+                    else f"{'добавил' if ev.kind == 'increase' else 'сократил'} {fmt(a.size)} → {fmt(b.size)}")
+            return [f"{self._tag()}Раст: {s} {what} (эту позицию не копирую: открыта до старта)"]
         if ev.kind in ("increase", "decrease"):
             return await self._resize(ev, k)
         if ev.kind == "tpsl":

@@ -109,10 +109,16 @@ def test_parse_card_rejects_contract_units_and_bad_symbol():
     boxes = [b if "BTC)" not in b.text else b._replace(text="Positions (Cont)") for b in CARD]   # контракты
     (sym_box, sym), = find_cards(boxes)
     assert parse_card(boxes, sym_box, sym)[0] is None
-    boxes = [b if "Perpetual" not in b.text else b._replace(text="BTCUSOTPerpetual>") for b in CARD]
+    boxes = [b if "Perpetual" not in b.text else b._replace(text="BTCU5DTPerpetual>") for b in CARD]
     (sym_box, sym), = find_cards(boxes)
     p, why = parse_card(boxes, sym_box, sym)
     assert p is None and "монета" in why
+
+
+def test_usdt_suffix_ocr_glitch_fixed():
+    for text in ("BTCUSOTPerpetual>", "BTCUSD7Perpetual", "ETHUS0TPerpetual >"):
+        (_, sym), = find_cards([B(7, 53, text)])
+        assert sym.endswith("USDT"), text
 
 
 def test_leverage_without_margin_is_unknown():

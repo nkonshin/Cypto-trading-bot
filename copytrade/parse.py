@@ -111,6 +111,7 @@ def find_cards(boxes) -> list:
         t = norm(b.text).upper()
         if "ERPETUAL" in t or "PERP" in t:
             sym = re.sub(r"[^A-Z0-9]", "", t.split("PERP")[0] if "PERP" in t else t.split("ERPETUAL")[0])
+            sym = re.sub(r"US[DO0Q][T7I1]$", "USDT", sym)      # частый сбой OCR: «BTCUSOT»
             cards.append((b, sym))
     return sorted(cards, key=lambda c: c[0].y)
 
