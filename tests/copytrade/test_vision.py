@@ -83,3 +83,7 @@ def test_change_detector_ignores_pnl_and_mark():
     c = a.copy()
     c[517:528, 291:297] = a[517:528, 305:311]   # 0.2000 → 0.0000: сменилась одна цифра
     assert d.changed(c)
+    n = a.copy()                                # шум сжатия живого стрима: одиночные пиксели
+    for y, x in ((457, 300), (457, 330), (457, 352), (484, 318), (484, 340), (530, 400)):
+        n[y, x] = 255 - n[y, x]
+    assert not d.changed(n)

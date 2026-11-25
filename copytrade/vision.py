@@ -126,8 +126,9 @@ class PanelReader:
 class ChangeDetector:
     """Говорит, изменилась ли панель в зоне статичных полей (PnL и mark замаскированы)."""
 
-    def __init__(self, diff: int = 25, min_pixels: int = 6):
-        # шум сжатия между кадрами в статичных зонах — 0 px, смена одной цифры объёма — ~20 px
+    def __init__(self, diff: int = 25, min_pixels: int = 5):
+        # на живом стриме шум сжатия — 1–6 одиночных пикселей; считаем только «кластеры» (≥3 изменённых
+        # в окне 3×3): шум → 0, смена одной цифры объёма → ~15 px
         self.diff = diff
         self.min_pixels = min_pixels
         self.ref = None
@@ -148,7 +149,9 @@ class ChangeDetector:
         sig = self._sig(frame)
         if self.ref is None:
             return True
-        return int((np.abs(sig - self.ref) > self.diff).sum()) >= self.min_pixels
+        d = (np.abs(sig - self.ref) > self.diff).astype(np.float32)
+        clustered = (cv2.boxFilter(d, -1, (3, 3), normalize=False) >= 3) & (d > 0)
+        return int(clustered.sum()) >= self.min_pixels
 
     def remember(self, frame: np.ndarray) -> None:
         self.ref = self._sig(frame)
