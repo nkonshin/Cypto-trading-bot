@@ -370,6 +370,8 @@ class App:
                 log.warning("balance: %r", e)
             await self.refresh_prices()
             for _ in range(20):
+                if any(p.symbol not in self.prices for p in (self.tracker.confirmed or {}).values()):
+                    await self.refresh_prices()          # новая монета у Раста — цена для PnL сразу, не через минуту
                 self.write_status()
                 await asyncio.sleep(3)
 
