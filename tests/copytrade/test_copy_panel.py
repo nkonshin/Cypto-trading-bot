@@ -56,27 +56,53 @@ def test_live_requires_confirmation():
     assert shared.load_settings()["mode"] == "live"
 
 
-def test_k_buttons_and_command():
+def test_mult_buttons_and_command():
     p = panel()
-    u, ctx = cb_update(ADMIN, "copy:k:+")
+    u, ctx = cb_update(ADMIN, "copy:mult:+")
     run(p.on_callback(u, ctx))
-    assert shared.load_settings()["k"] == 0.25
-    u, ctx = msg_update(ADMIN, ["0,3"])
-    run(p.cmd_k(u, ctx))
-    assert shared.load_settings()["k"] == 0.3
+    assert shared.load_settings()["mult"] == 1.1
+    u, ctx = msg_update(ADMIN, ["0,5"])
+    run(p.cmd_mult(u, ctx))
+    assert shared.load_settings()["mult"] == 0.5
     u, ctx = msg_update(ADMIN, ["99"])
-    run(p.cmd_k(u, ctx))
-    assert shared.load_settings()["k"] == 0.3
+    run(p.cmd_mult(u, ctx))
+    assert shared.load_settings()["mult"] == 0.5
+
+
+def test_pause_buttons_and_resume():
+    from telegram_ui.copy_panel import until_2300
+    p = panel()
+    u, ctx = cb_update(ADMIN, "copy:pause:4h")
+    run(p.on_callback(u, ctx))
+    assert 4 * 3600 - 5 < shared.load_settings()["paused_until"] - time.time() <= 4 * 3600
+    u, ctx = cb_update(ADMIN, "copy:resume")
+    run(p.on_callback(u, ctx))
+    assert shared.load_settings()["paused_until"] == 0
+    u, ctx = cb_update(ADMIN, "copy:pause:inf")
+    run(p.on_callback(u, ctx))
+    assert shared.load_settings()["paused_until"] == -1
+    t = until_2300(time.mktime((2026, 11, 25, 23, 30, 0, 0, 0, -1)))
+    assert time.localtime(t).tm_mday == 26 and time.localtime(t).tm_hour == 23
+
+
+def test_offer_button_becomes_command():
+    p = panel()
+    q_upd, ctx = cb_update(ADMIN, "copy:offer:abc123:yes")
+    q_upd.callback_query.edit_message_reply_markup = AsyncMock()
+    run(p.on_callback(q_upd, ctx))
+    (cmd,) = shared.load_settings()["commands"]
+    assert (cmd["name"], cmd["offer"], cmd["yes"]) == ("offer", "abc123", True)
+    q_upd.callback_query.edit_message_reply_markup.assert_called_once()
 
 
 def test_close_all_sets_one_shot_command():
     p = panel()
     u, ctx = cb_update(ADMIN, "copy:closeall")
     run(p.on_callback(u, ctx))
-    assert shared.load_settings()["command"] is None            # сначала подтверждение
+    assert shared.load_settings()["commands"] == []             # сначала подтверждение
     u, ctx = cb_update(ADMIN, "copy:closeall:yes")
     run(p.on_callback(u, ctx))
-    assert shared.load_settings()["command"]["name"] == "close_all"
+    assert shared.load_settings()["commands"][-1]["name"] == "close_all"
 
 
 def test_status_text_renders_live_status():
@@ -85,8 +111,10 @@ def test_status_text_renders_live_status():
     shared.write_status({"mode": "notify", "online": True, "seen_ok": True, "reason": "",
                          "his_positions": [{"symbol": "BTCUSDT", "side": "short", "size": 0.4, "avg": 59345.0,
                                             "leverage": 50, "tp": 54321.0, "sl": 59600.0}],
-                         "his_balance": 815.6503, "our_positions": [], "ignored": ["BTCUSDT"], "our_equity": 200.0,
+                         "his_balance": 815.6503, "our_positions": [], "our_equity": 200.0, "k": 0.2452,
                          "events": [{"t": time.time(), "text": "Вижу панель Раста"}]})
     t = status_text()
     assert "Раст: SHORT BTCUSDT 0.4 по 59 345 (50x) · TP 54 321 / SL 59 600" in t
-    assert "BTCUSDT не копирую" in t and "Пропорция балансов: 0.245" in t
+    assert "Баланс: его 815.65 · твой 200 USDT · k сейчас 0.245" in t
+    shared.save_settings(paused_until=-1)
+    assert "на паузе без срока" in status_text()

@@ -7,6 +7,12 @@ from typing import NamedTuple, Optional
 LEVERAGES = (1, 2, 3, 5, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125)
 
 
+class Msg(NamedTuple):
+    """Сообщение в Telegram; buttons — ((надпись, callback_data), …)."""
+    text: str
+    buttons: tuple = ()
+
+
 class Box(NamedTuple):
     """Распознанный текст в координатах вырезки (масштаб 1:1)."""
     x: float

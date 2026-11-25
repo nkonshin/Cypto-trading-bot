@@ -9,11 +9,13 @@ DATA_DIR = os.environ.get("COPIER_DATA", "/app/copier_data")
 MODES = ("off", "notify", "demo", "live")
 DEFAULTS = {
     "mode": "notify",          # off | notify | demo | live
-    "k": 0.2,                  # наш объём = его объём × k
-    "join_existing": False,    # входить ли в позиции, открытые до старта
+    "mult": 1.0,               # объём = его объём × (наш баланс / его баланс) × mult
+    "auto_symbols": ["BTCUSDT"],   # копируются сами; остальные монеты — через кнопку
+    "paused_until": 0,         # 0 — не на паузе, -1 — бессрочно, иначе unix-время окончания
     "default_leverage": 10,    # если его плечо не прочиталось
     "max_leverage": 50,        # потолок плеча у нас
-    "command": None,           # {"name": "close_all", "id": "..."} — разовая команда из бота
+    "paper_equity": 200,       # баланс для режима notify
+    "commands": [],            # разовые команды из бота: [{"id", "t", "name", ...}]
 }
 
 
@@ -42,9 +44,11 @@ def load_settings() -> dict:
     if s["mode"] not in MODES:
         s["mode"] = "notify"
     try:
-        s["k"] = min(5.0, max(0.001, float(s["k"])))
+        s["mult"] = min(3.0, max(0.05, float(s["mult"])))
     except (TypeError, ValueError):
-        s["k"] = DEFAULTS["k"]
+        s["mult"] = DEFAULTS["mult"]
+    if not isinstance(s.get("auto_symbols"), list):
+        s["auto_symbols"] = list(DEFAULTS["auto_symbols"])
     return s
 
 
@@ -52,6 +56,14 @@ def save_settings(**changes) -> dict:
     s = {**load_settings(), **changes, "updated": time.time()}
     _write("settings.json", s)
     return s
+
+
+def add_command(name: str, **args) -> dict:
+    """Разовая команда копировщику (хранятся последние 20)."""
+    import uuid
+    cmds = (load_settings().get("commands") or [])[-19:]
+    cmds.append({"id": uuid.uuid4().hex, "t": time.time(), "name": name, **args})
+    return save_settings(commands=cmds)
 
 
 def write_status(status: dict) -> None:

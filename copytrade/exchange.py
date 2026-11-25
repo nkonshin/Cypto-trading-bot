@@ -64,7 +64,7 @@ class PaperAdapter:
         t = await self._public.fetch_ticker(sym)
         return float(t["last"])
 
-    async def position(self, sym: str):
+    async def position(self, sym: str, side: Optional[str] = None):
         return self.positions.get(sym, (None, 0.0))
 
     async def balance(self):
@@ -74,7 +74,8 @@ class PaperAdapter:
     async def prepare(self, sym: str, leverage: int) -> None:
         self.orders.append(("prepare", sym, leverage))
 
-    async def market_order(self, sym: str, side: str, amount: float, reduce_only: bool) -> float:
+    async def market_order(self, sym: str, side: str, amount: float, reduce_only: bool,
+                           pos_side: Optional[str] = None) -> float:
         px = await self.price(sym)
         cur_side, cur = self.positions.get(sym, (None, 0.0))
         pos_side = "long" if side == "buy" else "short"
@@ -111,17 +112,12 @@ class CcxtAdapter:
     async def load(self) -> None:
         mk = await self.ex.load_markets()
         self.markets = {s: _market_info(m) for s, m in mk.items() if m.get("swap") and m.get("linear")}
+        # режим позиций (hedge/one-way) — настройка всего счёта Никиты; не меняем, только подстраиваемся
         try:
             mode = await self.ex.fetch_position_mode()
             self.hedged = bool(mode.get("hedged"))
-            if self.hedged:
-                try:
-                    await self.ex.set_position_mode(False)
-                    self.hedged = False
-                except Exception as e:      # есть открытые позиции — работаем в hedge-режиме
-                    log.warning("не удалось перейти в one-way: %s", e)
         except Exception as e:
-            log.warning("режим позиций не определён: %s", e)
+            log.warning("режим позиций не определён, считаю one-way: %s", e)
 
     async def close(self) -> None:
         await self.ex.close()
@@ -133,12 +129,20 @@ class CcxtAdapter:
         t = await self.ex.fetch_ticker(sym)
         return float(t["last"])
 
-    async def position(self, sym: str):
+    async def position(self, sym: str, side: Optional[str] = None):
+        """(сторона, объём в монетах). В hedge-режиме — позиция именно этой стороны."""
+        found = []
         for p in await self.ex.fetch_positions([sym]):
             amt = float(p.get("contracts") or 0) * float(p.get("contractSize") or 1)
             if amt > 0:
-                return p.get("side"), amt
-        return None, 0.0
+                found.append((p.get("side"), amt))
+        if side:
+            for f in found:
+                if f[0] == side:
+                    return f
+            if self.hedged:
+                return None, 0.0
+        return found[0] if found else (None, 0.0)
 
     async def balance(self):
         b = await self.ex.fetch_balance()
@@ -157,7 +161,8 @@ class CcxtAdapter:
         for s in sides:
             await self.ex.set_leverage(leverage, sym, {"side": s})
 
-    async def market_order(self, sym: str, side: str, amount: float, reduce_only: bool) -> float:
+    async def market_order(self, sym: str, side: str, amount: float, reduce_only: bool,
+                           pos_side: Optional[str] = None) -> float:
         params = self._p({"reduceOnly": True} if reduce_only else {})
         o = await self.ex.create_order(sym, "market", side, amount, None, params)
         return float(o.get("average") or o.get("price") or 0) or await self.price(sym)

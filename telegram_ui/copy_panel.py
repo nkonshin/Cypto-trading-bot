@@ -1,12 +1,13 @@
 """Управление копированием сделок Раста — только для админа (main_user_id).
 
 Бот пишет настройки в общий том (copier-data/settings.json), копировщик пишет статус (status.json).
-Команды: /copy, /copy_k 0.25, /copy_mode notify|demo|live|off.
+Команды: /copy, /copy_mult 1.2, /copy_mode notify|demo|live|off.
+Кнопки уведомлений копировщика (copy:offer:<id>:yes|no) тоже приходят сюда.
 """
 from __future__ import annotations
 
+import datetime as dt
 import time
-import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest
@@ -25,12 +26,30 @@ def _f(v, digits=4) -> str:
     return f"{v:,.{digits}f}".rstrip("0").rstrip(".").replace(",", " ")
 
 
+def pause_text(pu) -> str:
+    if pu == -1:
+        return "на паузе без срока"
+    if pu and pu > time.time():
+        return "на паузе до " + time.strftime("%H:%M", time.localtime(pu))
+    return ""
+
+
+def until_2300(now: float = None) -> float:
+    now = now or time.time()
+    d = dt.datetime.fromtimestamp(now).replace(hour=23, minute=0, second=0, microsecond=0)
+    if d.timestamp() <= now:
+        d += dt.timedelta(days=1)
+    return d.timestamp()
+
+
 def status_text() -> str:
     s, st = shared.load_settings(), shared.read_status()
     age = time.time() - st.get("updated", 0) if st else None
+    pz = pause_text(s.get("paused_until"))
     lines = ["📡 Копирование сделок Раста",
-             f"Режим: {MODE_NAMES.get(s['mode'], s['mode'])}",
-             f"k = {s['k']} · входить в уже открытые: {'да' if s['join_existing'] else 'нет'}"]
+             f"Режим: {MODE_NAMES.get(s['mode'], s['mode'])}" + (f" · ⏸ {pz}" if pz else ""),
+             f"Автомат: {', '.join(s['auto_symbols'])}; остальное — с подтверждением",
+             f"Объём = его объём × (твой баланс / его баланс) × {s['mult']}"]
     if not st or age is None or age > 30:
         lines.append("\n⚠️ Копировщик не отвечает" + (f" ({int(age)} с)" if age else "") + ".")
         return "\n".join(lines)
@@ -38,29 +57,22 @@ def status_text() -> str:
         lines.append(f"(копировщик ещё в режиме {st.get('mode')}, переключается…)")
     eye = "панель видна" if st.get("seen_ok") else f"панель не видна: {st.get('reason') or '—'}"
     lines.append(f"Стрим: {'в эфире' if st.get('online') else 'офлайн'} · {eye}")
-    his = st.get("his_positions") or []
     lines.append("")
-    if his:
-        for p in his:
-            lev = f" ({p['leverage']}x)" if p.get("leverage") else ""
-            tpsl = f" · TP {_f(p.get('tp'), 1)} / SL {_f(p.get('sl'), 1)}" if (p.get("tp") or p.get("sl")) else ""
-            lines.append(f"Раст: {p['side'].upper()} {p['symbol']} {_f(p['size'])} по {_f(p.get('avg'), 1)}{lev}{tpsl}")
-    else:
+    his = st.get("his_positions") or []
+    for p in his:
+        lev = f" ({p['leverage']}x)" if p.get("leverage") else ""
+        tpsl = f" · TP {_f(p.get('tp'), 1)} / SL {_f(p.get('sl'), 1)}" if (p.get("tp") or p.get("sl")) else ""
+        lines.append(f"Раст: {p['side'].upper()} {p['symbol']} {_f(p['size'])} по {_f(p.get('avg'), 1)}{lev}{tpsl}")
+    if not his:
         lines.append("Раст: позиций нет")
-    lines.append(f"Его баланс: {_f(st.get('his_balance'), 2)} USDT")
     ours = st.get("our_positions") or []
     for p in ours:
         flag = " (отцеплена — не трогаю)" if p.get("detached") else ""
-        lines.append(f"Ты: {(p.get('side') or '').upper()} {p['symbol']} {_f(p.get('amount'))}{flag}")
+        lines.append(f"Копия: {(p.get('side') or '').upper()} {p['symbol']} {_f(p.get('amount'))}{flag}")
     if not ours:
-        lines.append("Ты: копий нет")
-    for sym in st.get("ignored") or []:
-        lines.append(f"{sym} не копирую: была открыта до старта")
-    if st.get("our_equity") is not None:
-        eq = st["our_equity"]
-        lines.append(f"Твой баланс BingX: {_f(eq, 2)} USDT")
-        if st.get("his_balance"):
-            lines.append(f"Пропорция балансов: {_f(eq / st['his_balance'], 3)} (сейчас k = {s['k']})")
+        lines.append("Копий нет")
+    lines.append(f"Баланс: его {_f(st.get('his_balance'), 2)} · твой {_f(st.get('our_equity'), 2)} USDT"
+                 + (f" · k сейчас {_f(st['k'], 3)}" if st.get("k") else ""))
     ev = st.get("events") or []
     if ev:
         lines.append("\nПоследнее:")
@@ -73,11 +85,19 @@ def keyboard() -> InlineKeyboardMarkup:
     s = shared.load_settings()
     modes = [InlineKeyboardButton(("● " if s["mode"] == m else "") + MODE_BTN[m], callback_data=f"copy:mode:{m}")
              for m in shared.MODES]
+    if pause_text(s.get("paused_until")):
+        pause_row = [InlineKeyboardButton("▶️ Продолжить", callback_data="copy:resume")]
+    else:
+        pause_row = [InlineKeyboardButton("⏸ 1 ч", callback_data="copy:pause:1h"),
+                     InlineKeyboardButton("⏸ 4 ч", callback_data="copy:pause:4h"),
+                     InlineKeyboardButton("⏸ до 23:00", callback_data="copy:pause:23"),
+                     InlineKeyboardButton("⏸ без срока", callback_data="copy:pause:inf")]
     return InlineKeyboardMarkup([
         modes,
-        [InlineKeyboardButton("k −0.05", callback_data="copy:k:-"),
-         InlineKeyboardButton("k +0.05", callback_data="copy:k:+"),
-         InlineKeyboardButton(f"В открытые: {'да' if s['join_existing'] else 'нет'}", callback_data="copy:join")],
+        pause_row,
+        [InlineKeyboardButton("× −0.1", callback_data="copy:mult:-"),
+         InlineKeyboardButton(f"множитель {s['mult']}", callback_data="copy:refresh"),
+         InlineKeyboardButton("× +0.1", callback_data="copy:mult:+")],
         [InlineKeyboardButton("🔄 Обновить", callback_data="copy:refresh"),
          InlineKeyboardButton("Закрыть копии", callback_data="copy:closeall")],
     ])
@@ -88,7 +108,7 @@ class CopyPanel:
         self.is_admin = is_admin
 
     def handlers(self) -> list:
-        return [CommandHandler("copy", self.cmd_copy), CommandHandler("copy_k", self.cmd_k),
+        return [CommandHandler("copy", self.cmd_copy), CommandHandler("copy_mult", self.cmd_mult),
                 CommandHandler("copy_mode", self.cmd_mode),
                 CallbackQueryHandler(self.on_callback, pattern=r"^copy:")]
 
@@ -97,18 +117,18 @@ class CopyPanel:
             return
         await update.message.reply_text(status_text(), reply_markup=keyboard())
 
-    async def cmd_k(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def cmd_mult(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.is_admin(update.effective_user.id):
             return
         try:
-            k = float((context.args or [""])[0].replace(",", "."))
-            if not 0.001 <= k <= 5:
+            m = float((context.args or [""])[0].replace(",", "."))
+            if not 0.05 <= m <= 3:
                 raise ValueError
         except ValueError:
-            await update.message.reply_text("Формат: /copy_k 0.25 (от 0.001 до 5)")
+            await update.message.reply_text("Формат: /copy_mult 1.2 (от 0.05 до 3; 1 — ровно в пропорции балансов)")
             return
-        shared.save_settings(k=round(k, 4))
-        await update.message.reply_text(f"k = {round(k, 4)}. Действует на следующие открытия и добавки.\n\n"
+        shared.save_settings(mult=round(m, 3))
+        await update.message.reply_text(f"Множитель {round(m, 3)}. Действует на следующие открытия и добавки.\n\n"
                                         + status_text(), reply_markup=keyboard())
 
     async def cmd_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -135,8 +155,18 @@ class CopyPanel:
             await q.answer("⛔ Только для админа")
             return
         parts = q.data.split(":")
+        action = parts[1]
         note = ""
-        if parts[1] == "mode":
+        if action == "offer":                       # кнопка под уведомлением копировщика
+            yes = parts[3] == "yes"
+            shared.add_command("offer", offer=parts[2], yes=yes)
+            await q.answer("Принято")
+            try:
+                await q.edit_message_reply_markup(reply_markup=None)
+            except BadRequest:
+                pass
+            return
+        if action == "mode":
             m = parts[2]
             if m == "live":
                 await q.answer()
@@ -145,26 +175,30 @@ class CopyPanel:
                 return
             shared.save_settings(mode=m)
             note = f"Режим: {MODE_NAMES[m]}"
-        elif parts[1] == "live":
+        elif action == "live":
             shared.save_settings(mode="live")
             note = "Режим: ЖИВЫЕ ДЕНЬГИ"
-        elif parts[1] == "k":
-            k = shared.load_settings()["k"] + (0.05 if parts[2] == "+" else -0.05)
-            k = round(min(5.0, max(0.01, k)), 4)
-            shared.save_settings(k=k)
-            note = f"k = {k}"
-        elif parts[1] == "join":
-            v = not shared.load_settings()["join_existing"]
-            shared.save_settings(join_existing=v)
-            note = f"Входить в уже открытые: {'да' if v else 'нет'} (применится при следующем старте режима)"
-        elif parts[1] == "closeall":
+        elif action == "pause":
+            until = {"1h": time.time() + 3600, "4h": time.time() + 4 * 3600, "23": until_2300(), "inf": -1}[parts[2]]
+            shared.save_settings(paused_until=until)
+            note = "⏸ " + pause_text(until).capitalize()
+        elif action == "resume":
+            shared.save_settings(paused_until=0)
+            note = "▶️ Продолжаю, сверка позиций придёт сообщением"
+        elif action == "mult":
+            m = shared.load_settings()["mult"] + (0.1 if parts[2] == "+" else -0.1)
+            m = round(min(3.0, max(0.1, m)), 3)
+            shared.save_settings(mult=m)
+            note = f"Множитель {m}"
+        elif action == "closeall":
             if len(parts) == 2:
                 await q.answer()
-                await self._edit(q, "Закрыть по рынку все позиции, открытые копированием?", InlineKeyboardMarkup([[
-                    InlineKeyboardButton("Да, закрыть", callback_data="copy:closeall:yes"),
-                    InlineKeyboardButton("Отмена", callback_data="copy:refresh")]]))
+                await self._edit(q, "Закрыть по рынку все позиции, открытые копированием? Твои ручные не трону.",
+                                 InlineKeyboardMarkup([[
+                                     InlineKeyboardButton("Да, закрыть", callback_data="copy:closeall:yes"),
+                                     InlineKeyboardButton("Отмена", callback_data="copy:refresh")]]))
                 return
-            shared.save_settings(command={"name": "close_all", "id": uuid.uuid4().hex})
+            shared.add_command("close_all")
             note = "Закрываю копии…"
         await q.answer(note[:180] if note else None)
         await self._edit(q, (note + "\n\n" if note else "") + status_text(), keyboard())
